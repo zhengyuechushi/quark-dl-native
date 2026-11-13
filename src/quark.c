@@ -13,6 +13,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <pthread.h>
+
 /* Where the web client itself talks. Read from pan.quark.cn's front-end bundle
  * (bizHost / API host) and confirmed against the live service: asking
  * /1/clouddrive/file/sort without a session answers
@@ -45,6 +47,15 @@ static char g_err[300];
 static char g_dl_cookie[QUARK_COOKIE_MAX];
 static int g_dl_capture;
 static int g_dl_rot_logged;
+
+/* The web-layer HTTP call runs through shared scratch buffers that are not
+ * re-entrant, so every business call is single-threaded in practice. The one
+ * place that changes is the download queue: its worker threads each mint a
+ * fresh link (quark_direct_fresh) at start, and this lock serialises those
+ * mints so two files never rewrite the same request buffer at once. The API
+ * handlers run on the same single request flow they always did, so they do not
+ * take it. */
+static pthread_mutex_t g_call_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ------------------------------------------------------------- utilities */
 
@@ -1062,6 +1073,38 @@ quark_direct(const quark_session *s, const char *fid, char *url, size_t cap,
   json_free(root);
   free(resp);
   return 0;
+}
+
+int
+quark_direct_fresh(const char *fid, char *url, size_t cap, char *err,
+                   size_t errcap) {
+  quark_session s;
+  int rc;
+
+  if(!fid || !fid[0]) {
+    snprintf(err, errcap, "文件 id 为空");
+    return -1;
+  }
+  pthread_mutex_lock(&g_call_lock);
+  /* A fresh link and the cookie it must be fetched with go together: load the
+   * newest stored session, turn on the jar capture so this call's Set-Cookie
+   * rotation lands where quark_download_cookie reads it, and mint the link. */
+  if(quark_load(&s) != 0 || !s.valid) {
+    pthread_mutex_unlock(&g_call_lock);
+    snprintf(err, errcap, "还没有登录，无法为文件换直链");
+    return -1;
+  }
+  /* Seed the download jar from the stored session the first time (a restart
+   * clears it), so a rotation on this call lands on top of the real cookie
+   * rather than into an empty jar. */
+  if(!g_dl_cookie[0]) {
+    snprintf(g_dl_cookie, sizeof(g_dl_cookie), "%s", s.cookie);
+  }
+  g_dl_capture = 1;
+  rc = quark_direct(&s, fid, url, cap, err, errcap);
+  g_dl_capture = 0;
+  pthread_mutex_unlock(&g_call_lock);
+  return rc;
 }
 
 /* Exchanges exactly `n` fids for URLs in one request.

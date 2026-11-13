@@ -49,6 +49,11 @@ typedef struct {
   long long sample_done;
   long long sample_ms;
   char url[QUARK_URL_MAX];
+  /* A quark file is queued by its fid, not by a pre-signed direct link: the
+   * link is minted when the download actually starts, so a file that waits in
+   * the queue behind several 4 GB downloads is not handed an already-expired
+   * signature. Empty for a plain URL pasted into /api/dl/add. */
+  char fid[QUARK_FID_MAX];
   char dir[300];
   /* A name can now be a relative path ("剧集/第01话.mkv") so the download
    * recreates the folder tree it came from, not a bare file name. */
@@ -352,8 +357,8 @@ save_locked(void) {
     /* A task interrupted by a crash comes back as queued, never as running:
      * nothing is downloading it once the process is gone. */
     state = (t->state == DL_RUNNING) ? DL_QUEUED : t->state;
-    fprintf(f, "%d|%d|%lld|%lld|%s|%s|%s\n", t->id, state, t->done, t->total,
-            t->dir, t->name, t->url);
+    fprintf(f, "%d|%d|%lld|%lld|%s|%s|%s|%s\n", t->id, state, t->done, t->total,
+            t->dir, t->name, t->fid, t->url);
   }
   if(fclose(f) == 0) {
     rename(tmp, path);
@@ -400,9 +405,12 @@ save_settings(void) {
 static void
 load_queue(void) {
   char path[400];
-  /* id|state|done|total|dir|name|url. The url is the long field, and the line
-   * has to hold it whole: a link read back short is a broken signature that
-   * only shows up on the first attempt after a restart. */
+  /* id|state|done|total|dir|name|fid|url. The url is the long field and the
+   * last one, and the line has to hold it whole: a link read back short is a
+   * broken signature that only shows up on the first attempt after a restart.
+   * A queue written by an older build has no fid field (7 fields), which still
+   * loads: those tasks carry a pre-signed url and no fid, so they download
+   * straight from the stored link. */
   char line[QUARK_URL_MAX + 700];
   FILE *f;
 
@@ -412,29 +420,28 @@ load_queue(void) {
     return;
   }
   while(fgets(line, sizeof(line), f) && g_count < DL_MAX) {
-    char *field[7];
+    char *field[8];
     char *p = line;
-    int i;
-    int ok = 1;
+    int nfields = 0;
     dl_task *t;
 
     line[strcspn(line, "\r\n")] = 0;
-    for(i = 0; i < 6; i++) {
+    /* Split on '|'. The last field is always the url, and it may itself be
+     * empty for a fid-queued task whose link is minted at download time. */
+    field[0] = p;
+    nfields = 1;
+    while(nfields < 8) {
       char *bar = strchr(p, '|');
 
       if(!bar) {
-        ok = 0;
         break;
       }
       *bar = 0;
-      field[i] = p;
+      field[nfields] = bar + 1;
+      nfields++;
       p = bar + 1;
     }
-    if(!ok) {
-      continue;
-    }
-    field[6] = p;
-    if(!field[6][0] || strncmp(field[6], "http", 4)) {
+    if(nfields != 7 && nfields != 8) {
       continue;
     }
     t = &g_task[g_count++];
@@ -445,7 +452,17 @@ load_queue(void) {
     t->total = strtoll(field[3], NULL, 10);
     snprintf(t->dir, sizeof(t->dir), "%s", field[4]);
     snprintf(t->name, sizeof(t->name), "%s", field[5]);
-    snprintf(t->url, sizeof(t->url), "%s", field[6]);
+    if(nfields == 8) {
+      snprintf(t->fid, sizeof(t->fid), "%s", field[6]);
+      snprintf(t->url, sizeof(t->url), "%s", field[7]);
+    } else {
+      snprintf(t->url, sizeof(t->url), "%s", field[6]);
+    }
+    /* A task that is neither a pasted URL nor a fid is not a download. */
+    if(!t->fid[0] && (!t->url[0] || strncmp(t->url, "http", 4))) {
+      g_count--;
+      continue;
+    }
     if(t->state == DL_RUNNING || t->state == DL_CANCELED) {
       t->state = DL_QUEUED;
     }
@@ -993,6 +1010,32 @@ dl_attempt(dl_task *t) {
     snprintf(t->err, sizeof(t->err), "无法写入 %s: %s", part, strerror(errno));
     return -3;
   }
+
+  /* A fid-queued file mints its direct link here, at the moment it actually
+   * starts, instead of at add time. That is what keeps a file that waited in
+   * the queue behind several 4 GB downloads from being handed an expired
+   * signature (HTTP 412). The link may already hold a value from an earlier
+   * attempt or a restart; it is refreshed either way so the signature and the
+   * cookie are both current. */
+  if(t->fid[0]) {
+    char fresh[QUARK_URL_MAX];
+    char qerr[300];
+
+    if(quark_direct_fresh(t->fid, fresh, sizeof(fresh), qerr, sizeof(qerr))) {
+      snprintf(t->err, sizeof(t->err), "换直链失败：%s", qerr);
+      close(fd);
+      /* Not permanent: a transient network failure should let the worker's
+       * retry loop have another go; a lost login is still not a reason to
+       * discard the task's bytes. */
+      return -1;
+    }
+    snprintf(t->url, sizeof(t->url), "%s", fresh);
+    /* The link was minted under a possibly-rotated cookie; publish it so this
+     * download (and the next fid-queued one) fetches with the value the CDN
+     * just checked the signature against. */
+    dl_set_cookie(quark_download_cookie());
+  }
+
   hdr_snapshot(hdrs, sizeof(hdrs));
   isq = quark_host(t->url);
 
@@ -1328,36 +1371,40 @@ dl_set_default_dir(const char *dir, char *err, size_t cap) {
 }
 
 int
-dl_add(const char *url, const char *name, const char *dir, char *err,
-       size_t cap) {
+dl_add(const char *url, const char *fid, const char *name, const char *dir,
+       char *err, size_t cap) {
   char clean[512];
   dl_task *t = NULL;
   int i;
   int id;
 
-  if(!url || !*url) {
+  /* A fid-queued task has no url up front: the link is minted at download time.
+   * A plain pasted link has no fid and must be a full http(s) url. */
+  if((!fid || !fid[0]) && (!url || !*url)) {
     snprintf(err, cap, "URL 为空");
     return -1;
   }
-  if(strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
-    snprintf(err, cap, "只支持 http:// 或 https:// 链接");
-    return -1;
-  }
-  /* Refused, not shortened. Everything after the '?' of a quark direct link is
-   * part of its signature, so a link that does not fit the queue is a link that
-   * would be rejected by the CDN with a message about credentials. Saying so
-   * here costs one build and saves a round of 412. */
-  if(strlen(url) >= QUARK_URL_MAX) {
-    snprintf(err, cap, "URL 太长：%u 字节，上限 %d", (unsigned)strlen(url),
-             QUARK_URL_MAX - 1);
-    boot_trace("入队被拒：URL %u 字节超过上限 %d", (unsigned)strlen(url),
+  if(!fid || !fid[0]) {
+    if(strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
+      snprintf(err, cap, "只支持 http:// 或 https:// 链接");
+      return -1;
+    }
+    /* Refused, not shortened. Everything after the '?' of a quark direct link
+     * is part of its signature, so a link that does not fit the queue is a link
+     * that would be rejected by the CDN with a message about credentials. Saying
+     * so here costs one build and saves a round of 412. */
+    if(strlen(url) >= QUARK_URL_MAX) {
+      snprintf(err, cap, "URL 太长：%u 字节，上限 %d", (unsigned)strlen(url),
                QUARK_URL_MAX - 1);
-    return -1;
+      boot_trace("入队被拒：URL %u 字节超过上限 %d", (unsigned)strlen(url),
+                 QUARK_URL_MAX - 1);
+      return -1;
+    }
   }
   if(name && *name) {
     sanitize_name(name, clean, sizeof(clean));
   } else {
-    dl_guess_name(url, clean, sizeof(clean));
+    dl_guess_name(url ? url : "", clean, sizeof(clean));
   }
 
   /* The worker starts inside dl_add, so the directory has to exist first or
@@ -1374,8 +1421,19 @@ dl_add(const char *url, const char *name, const char *dir, char *err,
   pthread_mutex_lock(&g_lock);
   for(i = 0; i < g_count; i++) {
     dl_task *e = &g_task[i];
+    int same;
 
-    if(!e->id || strcmp(e->url, url)) {
+    if(!e->id) {
+      continue;
+    }
+    /* Two fid-queued tasks are the same file by fid; two pasted links are the
+     * same by url. A fid and a pasted url never collide. */
+    if(fid && fid[0]) {
+      same = e->fid[0] && !strcmp(e->fid, fid);
+    } else {
+      same = !e->fid[0] && !strcmp(e->url, url);
+    }
+    if(!same) {
       continue;
     }
     /* Already waiting or in flight: hand back the same task. Adding it twice
@@ -1404,6 +1462,10 @@ dl_add(const char *url, const char *name, const char *dir, char *err,
     e->attempts = 0;
     e->done = 0;
     e->err[0] = 0;
+    if(fid && fid[0]) {
+      snprintf(e->fid, sizeof(e->fid), "%s", fid);
+      e->url[0] = 0; /* stale link: it will be re-minted */
+    }
     if(name && *name) {
       snprintf(e->name, sizeof(e->name), "%s", clean);
     }
@@ -1433,7 +1495,11 @@ dl_add(const char *url, const char *name, const char *dir, char *err,
   memset(t, 0, sizeof(*t));
   t->id = g_next_id++;
   t->state = DL_QUEUED;
-  snprintf(t->url, sizeof(t->url), "%s", url);
+  if(fid && fid[0]) {
+    snprintf(t->fid, sizeof(t->fid), "%s", fid);
+  } else {
+    snprintf(t->url, sizeof(t->url), "%s", url);
+  }
   snprintf(t->name, sizeof(t->name), "%s", clean);
   if(dir && dir[0] == '/') {
     snprintf(t->dir, sizeof(t->dir), "%s", dir);

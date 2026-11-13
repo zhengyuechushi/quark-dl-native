@@ -732,8 +732,8 @@ api_dl_add(struct MHD_Connection *conn, const char *body, size_t size) {
   ids[0] = 0;
   errors[0] = 0;
   for(i = 0; i < n; i++) {
-    int id = dl_add(urls[i], name[0] ? name : NULL, dir[0] ? dir : NULL, msg,
-                    sizeof(msg));
+    int id = dl_add(urls[i], NULL, name[0] ? name : NULL, dir[0] ? dir : NULL,
+                    msg, sizeof(msg));
 
     if(id < 0) {
       char safe[400];
@@ -1350,7 +1350,6 @@ api_quark_list(struct MHD_Connection *conn) {
  * A tab separates the fields because a file name may contain anything else,
  * including the pipe that "fid|name" would have used. */
 #define QUARK_ADD_MAX 2000
-#define QUARK_BATCH 50
 
 /* A relative path can be several folders deep, so the collected name needs
  * more room than a bare file name. It must match dl_task.name in dl.c, which
@@ -1527,84 +1526,26 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
     }
   }
 
-  /* Direct links come in batches: one request per file would mean a round trip
-   * and a spinner that does not move for every single file in a folder.
-   * The URL table is on the heap - fifty 2 KB strings is a hundred kilobytes,
-   * which is not something to put in a console thread's frame. */
+  /* Queue by fid, not by a pre-signed link. Minting every link here would hand
+   * the files at the back of the queue an already-expired signature by the time
+   * the downloads ahead of them finish (HTTP 412). Each fid is queued as-is and
+   * its direct link is minted when the download actually starts, so a link is
+   * always fresh no matter how long the file waited. */
   {
-    int base = 0;
-    int logged = 0;
-    char(*urls)[QUARK_URL_MAX] =
-        (char(*)[QUARK_URL_MAX])malloc((size_t)QUARK_BATCH * QUARK_URL_MAX);
+    int i;
 
-    if(!urls) {
-      free(arr);
-      return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
-                       "{\"ok\":false,\"error\":\"内存不足\"}");
-    }
-    while(base < cc.count) {
-      const char *fids[QUARK_BATCH];
-      int n = cc.count - base;
-      int i;
-      int got;
-
-      if(n > QUARK_BATCH) {
-        n = QUARK_BATCH;
-      }
-      for(i = 0; i < n; i++) {
-        fids[i] = arr[base + i].fid;
-        urls[i][0] = 0;
-      }
-      got = quark_direct_many(&s, fids, n, (char(*)[QUARK_URL_MAX])urls, err,
-                              sizeof(err));
-      boot_trace("add: 第 %d~%d 个文件换直链，得到 %d 条", base + 1, base + n,
-                 got);
-      if(got < 0) {
-        failed += n;
+    for(i = 0; i < cc.count; i++) {
+      if(dl_add(NULL, arr[i].fid,
+                arr[i].name[0] ? arr[i].name : NULL,
+                dest[0] ? dest : NULL, err, sizeof(err)) < 0) {
+        failed++;
         if(!first[0]) {
-          snprintf(first, sizeof(first), "%s", err);
+          snprintf(first, sizeof(first), "%s: %s", arr[i].name, err);
         }
-        if(logged < 3) {
-          logged++;
-          boot_trace("add: 这一批换直链失败：%s", err);
-        }
-        base += n;
         continue;
       }
-      /* These links were issued under the cookie *this* call rotated to, which
-       * is what the CDN will check them against. The copy handed to the queue
-       * at load time is one generation older. */
-      {
-        const char *ck = quark_download_cookie();
-
-        dl_set_cookie(ck ? ck : s.cookie);
-      }
-      for(i = 0; i < n; i++) {
-        if(!urls[i][0]) {
-          failed++;
-          if(!first[0]) {
-            snprintf(first, sizeof(first), "%s: 没有拿到直链",
-                     arr[base + i].name);
-          }
-          continue;
-        }
-        if(dl_add(urls[i], arr[base + i].name[0] ? arr[base + i].name : NULL,
-                  dest[0] ? dest : NULL, err, sizeof(err)) < 0) {
-          failed++;
-          if(logged < 3) {
-            logged++;
-            boot_trace("add: 入队失败 %s：%s", arr[base + i].name, err);
-          }
-          if(!first[0]) {
-            snprintf(first, sizeof(first), "%s: %s", arr[base + i].name, err);
-          }
-          continue;
-        }
-        queued++;
-      }
-      base += n;
+      queued++;
     }
-    free(urls);
   }
   free(arr);
   boot_trace("add: 完成 入队 %d 失败 %d 耗时 %ld 秒%s%.160s", queued, failed,

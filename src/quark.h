@@ -114,6 +114,17 @@ int quark_list(const quark_session *s, const char *pdir, int page, int size,
 int quark_direct(const quark_session *s, const char *fid, char *url, size_t cap,
                  char *err, size_t errcap);
 
+/* Thread-safe one-shot direct link for the download queue's lazy minting.
+ *
+ * Loads the stored session, folds any Set-Cookie rotation into the download jar
+ * (so the freshly-minted link and the cookie it must be fetched with stay in
+ * step), and returns the link. This is what a download thread calls right
+ * before it starts a fid-queued file; it serialises on an internal lock because
+ * the HTTP call underneath uses shared scratch buffers that are not re-entrant.
+ * Returns 0 with `url` filled, or -1 with `err` set. */
+int quark_direct_fresh(const char *fid, char *url, size_t cap, char *err,
+                       size_t errcap);
+
 /* Fills urls[k] for every fids[k] the service answered for, in the same order.
  * Returns how many were resolved, which may be fewer than n: a file the account
  * cannot download is skipped rather than failing the whole batch.

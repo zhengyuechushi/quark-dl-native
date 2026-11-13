@@ -54,11 +54,16 @@ int dl_set_default_dir(const char *dir, char *err, size_t cap);
 /* Queues one URL. `name` and `dir` may be NULL to use the URL's basename and
  * the default directory. Returns the task id, or -1 with err filled in.
  *
+ * `fid` is optional: when set (a quark file id rather than a pasted link), the
+ * queue stores the fid and mints a fresh direct link when the download actually
+ * starts, so a file that waits behind several large downloads is never handed
+ * an expired signature. `url` may then be empty.
+ *
  * Re-adding a URL that is still queued or running returns its id and changes
  * nothing; re-adding one that has finished, failed or been canceled runs it
  * again, which resumes from the .part file when one is there. */
-int dl_add(const char *url, const char *name, const char *dir, char *err,
-           size_t cap);
+int dl_add(const char *url, const char *fid, const char *name, const char *dir,
+           char *err, size_t cap);
 
 /* The session a quark download has to present, and the last word on it.
  *

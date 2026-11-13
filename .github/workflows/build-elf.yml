@@ -117,6 +117,10 @@ jobs:
       # call. A handler that loads the session on its own would leave the queue
       # without a cookie: the login works, the link resolves, and the download is
       # refused with 412 - three symptoms that all look like something else.
+      #
+      # Since links are minted lazily, the cookie flows through the queue itself:
+      # quark_direct_fresh loads the session and rotates the jar, and dl_attempt
+      # publishes the newest value with dl_set_cookie right after it mints a link.
       - name: Session cookie reaches the queue
         run: |
           set -e
@@ -125,8 +129,9 @@ jobs:
             exit 1
           fi
           grep -q "session_load(&s)" src/api.c
-          grep -q "quark_download_cookie" src/api.c
+          grep -q "quark_download_cookie" src/dl.c
           grep -q "dl_set_cookie" src/dl.c
+          grep -q "quark_direct_fresh" src/dl.c
           echo ok
 
       # The download endpoint keys its size limit on the User-Agent: a request
@@ -196,6 +201,24 @@ jobs:
           grep -q "range_end" src/httpc.h
           grep -q "pwrite(r->fd, p, len" src/dl.c
           grep -q "Range: bytes=%lld-%lld" src/httpc.c
+          echo ok
+
+      # Direct links are minted when a download starts, not when a folder is
+      # added: a file queued behind several 4 GB downloads would otherwise be
+      # handed a signature that expires before its turn (HTTP 412). The queue
+      # stores the fid and dl_attempt refreshes the link, serialised so the
+      # shared HTTP scratch is not rewritten by two workers at once.
+      - name: Links are minted lazily at download time
+        run: |
+          set -e
+          grep -q "char fid\[QUARK_FID_MAX\]" src/dl.c
+          grep -q "quark_direct_fresh" src/quark.c
+          grep -q "pthread_mutex_lock(&g_call_lock)" src/quark.c
+          grep -q "quark_direct_fresh(t->fid" src/dl.c
+          # the add handler queues by fid, never pre-resolves the whole folder
+          grep -q "dl_add(NULL, arr\[i\].fid" src/api.c
+          # the persisted queue carries the fid field
+          grep -q "t->fid, t->url" src/dl.c
           echo ok
 
       # The page ships inside the ELF, so what it does is invisible until it is
