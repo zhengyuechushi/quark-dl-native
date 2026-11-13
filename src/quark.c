@@ -545,10 +545,24 @@ quark_qr_poll(const char *token, quark_session *s, char *err, size_t errcap) {
            "?client_id=" QUARK_CLIENT_ID "&v=1.2&token=%s&request_id=%s",
            token, rid);
 
+  /* The page polls this every two seconds, and the report was "the QR code
+   * appears, then the next request fails and the process is gone". So both ends
+   * of each poll are recorded: whichever line is last tells whether it died
+   * inside the request, inside the parse, or on the way back. No token, no
+   * body - this file is readable over FTP. */
+  {
+    static __thread int npolls;
+
+    npolls++;
+    boot_trace("qr poll #%d 开始", npolls);
+  }
   if(fetch(url, NULL, "application/json, text/plain, */*", &body, &meta, err,
            errcap)) {
+    boot_trace("qr poll 请求失败: %s", err);
     return -1;
   }
+  boot_trace("qr poll 返回 status=%d body=%d 字节", meta.status,
+             body ? (int)strlen(body) : -1);
   v = json_parse(body, jerr, sizeof(jerr));
   free(body);
   if(!v) {
@@ -565,6 +579,7 @@ quark_qr_poll(const char *token, quark_session *s, char *err, size_t errcap) {
     }
     return QUARK_QR_OK;
   }
+  boot_trace("qr poll 状态 %ld", (long)code);
   json_free(v);
 
   /* The waiting codes are the ones the live service actually returns: 50004001
