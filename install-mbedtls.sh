@@ -41,7 +41,14 @@ make -C "$SRC" -j"$JOBS" lib \
   CC="$CC_BIN" AR="$AR_BIN" RANLIB="$RANLIB_BIN" ARFLAGS=rcs \
   CFLAGS="-O2 -fPIC -I$SRC/include -I$SRC/library"
 
-make -C "$SRC" install PREFIX="$PREFIX"
+# Copy the three archives and the headers instead of running `make install`:
+# that target also builds and installs the example programs, which would happen
+# with the host compiler and produce host binaries in a cross build.
+mkdir -p "$PREFIX/lib" "$PREFIX/include"
+cp "$SRC/library/libmbedcrypto.a" "$SRC/library/libmbedx509.a" \
+   "$SRC/library/libmbedtls.a" "$PREFIX/lib/"
+cp -R "$SRC/include/mbedtls" "$PREFIX/include/"
+
 test -f "$PREFIX/lib/libmbedtls.a"
 test -f "$PREFIX/include/mbedtls/ssl.h"
 echo "mbedTLS ${VERSION} installed in ${PREFIX}"
