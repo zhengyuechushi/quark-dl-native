@@ -32,12 +32,19 @@ static char g_raw[QUARK_RAW_MAX + 1];
 static char g_err[300];
 
 /* The cookie the links in hand were minted with, and the switch that makes
- * call() fold a rotation into it. Only quark_direct_many turns the switch on,
+ * call() fold a rotation into it. Only the direct-link path turns the switch on,
  * and only for the one call that matters: every other endpoint rotates __puus
  * too, but those links are not used for a download, and keeping the stored
- * session untouched is what makes a failed listing leave no trace behind. */
+ * session untouched is what makes a failed listing leave no trace behind.
+ *
+ * It is carried forward from call to call rather than reset from the stored
+ * session each time. A folder resolves in many requests now, and every one of
+ * them rotates __puus; re-seeding from the file would send the oldest token we
+ * own to the second half of the folder. quark_logout and quark_set_cookie clear
+ * it, so a new login can never inherit the previous account's jar. */
 static char g_dl_cookie[QUARK_COOKIE_MAX];
 static int g_dl_capture;
+static int g_dl_rot_logged;
 
 /* ------------------------------------------------------------- utilities */
 
@@ -54,6 +61,19 @@ quark_last_error(void) {
 const char *
 quark_download_cookie(void) {
   return g_dl_cookie[0] ? g_dl_cookie : NULL;
+}
+
+/* FNV-1a, used only to answer "did this response change the jar?" - a 7 KB
+ * strcmp against a copy would need another 7 KB of stack for the same answer. */
+static unsigned long long
+fnv1a(const char *s) {
+  unsigned long long h = 1469598103934665603ULL;
+
+  while(s && *s) {
+    h ^= (unsigned char)*s++;
+    h *= 1099511628211ULL;
+  }
+  return h;
 }
 
 /* Keeps the head of a response so a failure can quote what actually arrived.
@@ -75,6 +95,42 @@ keep_raw(const char *body, size_t len) {
       g_raw[n] = ' ';
     }
   }
+}
+
+/* Copies at most `max` bytes of src, never splitting a UTF-8 sequence.
+ *
+ * The message a refusal carries is the only statement of *why* the service said
+ * no, and it is Chinese: cutting it at a byte count leaves half a character at
+ * the end, which the page renders as a replacement glyph right where the reason
+ * was. */
+static void
+clip_utf8(char *out, size_t cap, const char *src, size_t max) {
+  size_t i = 0;
+  size_t keep = 0;
+
+  if(cap == 0) {
+    return;
+  }
+  out[0] = 0;
+  if(!src) {
+    return;
+  }
+  while(src[i] && i < max) {
+    unsigned char c = (unsigned char)src[i];
+    size_t len = c < 0x80 ? 1
+                 : (c >> 5) == 0x6 ? 2
+                 : (c >> 4) == 0xE ? 3
+                 : (c >> 3) == 0x1E ? 4
+                                    : 1;
+
+    if(i + len > max || i + len >= cap) {
+      break;
+    }
+    i += len;
+    keep = i;
+  }
+  memcpy(out, src, keep);
+  out[keep] = 0;
 }
 
 /* A growable body buffer. Listings of 50 entries run to tens of kilobytes, so
@@ -241,6 +297,9 @@ quark_logout(void) {
   unlink(path);
   account_path(path, sizeof(path));
   unlink(path);
+  /* The download jar belongs to the account that just left. Keeping it would
+   * let the next login mint links under the previous session's __puus. */
+  g_dl_cookie[0] = 0;
 }
 
 /* ---------------------------------------------------------- cookie import */
@@ -279,6 +338,8 @@ quark_set_cookie(const char *raw, quark_session *s, char *err, size_t cap) {
   snprintf(s->cookie, sizeof(s->cookie), "%s", clean);
   s->valid = 1;
   s->verified = 0;
+  /* A freshly pasted cookie is a different session than the one the jar holds. */
+  g_dl_cookie[0] = 0;
   return 0;
 }
 
@@ -523,6 +584,9 @@ qr_exchange(const char *ticket, quark_session *s, char *err, size_t errcap) {
   memset(s, 0, sizeof(*s));
   snprintf(s->cookie, sizeof(s->cookie), "%s", meta.set_cookie);
   s->valid = 1;
+  /* A new login means a new session; any jar rotated under the old one is not
+   * just stale, it belongs to somebody else. */
+  g_dl_cookie[0] = 0;
   /* The service has just confirmed who this is; asking again would be a second
    * round trip for information the caller already has. */
   s->verified = 1;
@@ -691,10 +755,17 @@ call(const quark_session *s, const char *method, const char *path,
   }
   keep_raw(buf.p, buf.len);
   if(res.status != 200) {
+    /* The body is quoted here on purpose. A 400 from this service *is* an
+     * explanation ("参数错误", "fids 超过上限", ...) and it arrives in the very
+     * answer we were about to throw away: without it, a refused request reads
+     * as "HTTP 400（不是网络问题）" and the next question is unanswerable. */
+    char why[220];
+
+    clip_utf8(why, sizeof(why), g_raw, 170);
     snprintf(g_err, sizeof(g_err), "HTTP %d: %.200s", res.status,
              buf.p ? buf.p : "");
-    snprintf(err, errcap, "HTTP %d（不是网络问题，是这个请求被拒了）",
-             res.status);
+    snprintf(err, errcap, "HTTP %d（请求被拒）%s%s", res.status,
+             why[0] ? "：" : "", why);
     free(buf.p);
     return -1;
   }
@@ -986,13 +1057,13 @@ quark_direct(const quark_session *s, const char *fid, char *url, size_t cap,
   return 0;
 }
 
-/* Exchanges up to `n` fids for URLs in one request. The service accepts a fids
- * array, and asking one at a time costs a full round trip each: selecting a
- * hundred files would mean a hundred requests and half a minute of staring at
- * a spinner that has not moved. */
-int
-quark_direct_many(const quark_session *s, const char *const *fids, int n,
-                  char urls[][QUARK_URL_MAX], char *err, size_t errcap) {
+/* Exchanges exactly `n` fids for URLs in one request.
+ *
+ * Whether the service will take a group of them is another matter: see the
+ * note on g_batch_max below. This function is one attempt, nothing more. */
+static int
+dl_fetch(const quark_session *s, const char *const *fids, int n,
+         char urls[][QUARK_URL_MAX], char *err, size_t errcap) {
   char *body;
   size_t cap = (size_t)n * (QUARK_FID_MAX + 8) + 64;
   size_t used = 0;
@@ -1034,20 +1105,32 @@ quark_direct_many(const quark_session *s, const char *const *fids, int n,
   snprintf(body + used, cap - used, "]}");
 
   /* Seeded here rather than before the call so a request that never leaves the
-   * machine cannot publish a stale jar as "the one for this batch". */
-  snprintf(g_dl_cookie, sizeof(g_dl_cookie), "%s", s->cookie);
-  g_dl_capture = 1;
-  rc = call(s, "POST", "/1/clouddrive/file/download?" QUARK_COMMON, body, &resp,
-            err, errcap);
-  g_dl_capture = 0;
-  if(rc) {
+   * machine cannot publish a stale jar as "the one for this batch". Once a jar
+   * exists it is the newest one the account has given us, so it is reused. */
+  {
+    unsigned long long before;
+
+    if(!g_dl_cookie[0]) {
+      snprintf(g_dl_cookie, sizeof(g_dl_cookie), "%s", s->cookie);
+    }
+    before = fnv1a(g_dl_cookie);
+    g_dl_capture = 1;
+    rc = call(s, "POST", "/1/clouddrive/file/download?" QUARK_COMMON, body,
+              &resp, err, errcap);
+    g_dl_capture = 0;
+    if(rc) {
+      free(body);
+      return -1;
+    }
     free(body);
-    return -1;
-  }
-  free(body);
-  if(strcmp(g_dl_cookie, s->cookie) != 0) {
-    boot_trace("直链: 响应轮换了会话 cookie（%u 字节），下载将用它",
-               (unsigned)strlen(g_dl_cookie));
+    /* Every one of these responses rotates __puus, so a folder of fifty files
+     * would write fifty identical lines over the trail that matters. The first
+     * few are the evidence; the rest is noise. */
+    if(fnv1a(g_dl_cookie) != before && g_dl_rot_logged < 3) {
+      g_dl_rot_logged++;
+      boot_trace("直链: 响应轮换了会话 cookie（%u 字节），下载将用它",
+                 (unsigned)strlen(g_dl_cookie));
+    }
   }
   root = json_parse(resp, perr, sizeof(perr));
   if(!root) {
@@ -1100,6 +1183,129 @@ quark_direct_many(const quark_session *s, const char *const *fids, int n,
     return -1;
   }
   return got;
+}
+
+/* How many fids the service takes in one request, learned at run time.
+ *
+ * A folder of nineteen files was refused with HTTP 400 while the same account
+ * resolved a single file a minute earlier, and a folder of five failed the same
+ * way, so the number of fids in the body is what the service objects to - but
+ * what number it will take is not documented anywhere and is not stated in the
+ * refusal either. Guessing a constant is a guess in one of two directions:
+ * too big and folders stay broken, too small and every folder costs a round
+ * trip per file forever.
+ *
+ * So it is measured. A group that is refused is halved and retried, down to one
+ * fid - a group of one is known to work, it is how the single-file download
+ * succeeded. Whatever size survives is remembered for the rest of the process,
+ * so the second folder pays nothing for the first one's discovery.
+ *
+ * The important part is the floor: a refusal costs round trips, never the
+ * download. Falling back to one fid at a time is what makes a folder usable
+ * even when the answer is "the service will not take two of these at once". */
+static int g_batch_max = 50;
+
+static int
+dl_resolve(const quark_session *s, const char *const *fids, int n,
+           char urls[][QUARK_URL_MAX], int depth, char *err, size_t errcap) {
+  int got;
+  int half;
+  int a;
+  int b;
+  char tail[260];
+
+  if(n <= 0) {
+    return 0;
+  }
+  /* depth only grows by halving, so it is a guard against a logic error, not
+   * against the service: 8 levels already covers a group of 2000. */
+  if(depth >= 8) {
+    snprintf(err, errcap, "直链拆分过深（%d 个文件）", n);
+    return -1;
+  }
+  got = dl_fetch(s, fids, n, urls, err, errcap);
+  if(got >= 0) {
+    return got;
+  }
+  if(n == 1) {
+    /* One fid, refused on its own. Nothing to split: this file is the problem,
+     * and err already says what the service called it. */
+    boot_trace("直链: 单个文件被拒（%s）", err);
+    return -1;
+  }
+
+  half = n / 2;
+  if(half < 1) {
+    half = 1;
+  }
+  if(half < g_batch_max) {
+    g_batch_max = half;
+    boot_trace("直链: %d 个一起请求被拒（%.120s），改成每次最多 %d 个", n, err,
+               g_batch_max);
+  }
+  a = dl_resolve(s, fids, half, urls, depth + 1, err, errcap);
+  tail[0] = 0;
+  b = dl_resolve(s, fids + half, n - half, (char(*)[QUARK_URL_MAX])urls + half,
+                 depth + 1, tail, sizeof(tail));
+  if(a < 0 && b < 0) {
+    /* Report the half that failed last: with per-file requests that is the
+     * same message, and it is the one that names the file. */
+    if(tail[0]) {
+      snprintf(err, errcap, "%s", tail);
+    }
+    return -1;
+  }
+  return (a > 0 ? a : 0) + (b > 0 ? b : 0);
+}
+
+int
+quark_direct_many(const quark_session *s, const char *const *fids, int n,
+                  char urls[][QUARK_URL_MAX], char *err, size_t errcap) {
+  int base = 0;
+  int total = 0;
+  int hinted = 0;
+  char last[260];
+
+  last[0] = 0;
+  if(n <= 0) {
+    snprintf(err, errcap, "没有要换的文件");
+    return -1;
+  }
+  while(base < n) {
+    int take = g_batch_max > 0 ? g_batch_max : 1;
+    int got;
+
+    if(take > n - base) {
+      take = n - base;
+    }
+    got = dl_resolve(s, fids + base, take, (char(*)[QUARK_URL_MAX])urls + base,
+                     0, err, errcap);
+    if(got < 0) {
+      snprintf(last, sizeof(last), "%s", err);
+    } else {
+      total += got;
+    }
+    /* The size can shrink inside dl_resolve, so the next chunk is measured
+     * again instead of trusting the one this iteration started with. */
+    if(g_batch_max < 50 && !hinted) {
+      hinted = 1;
+      boot_trace("直链: 本次按每个请求最多 %d 个文件换直链", g_batch_max);
+    }
+    base += take;
+  }
+  if(total == 0) {
+    if(!last[0]) {
+      snprintf(last, sizeof(last), "一个直链都没换到｜原始：%.200s",
+               quark_last_raw());
+    }
+    snprintf(err, errcap, "%s", last);
+    boot_trace("直链: %d 个文件全部失败（%.160s）", n, last);
+    return -1;
+  }
+  if(total < n) {
+    boot_trace("直链: %d 个文件里换到 %d 条", n, total);
+  }
+  return total;
 }
 
 /* ------------------------------------------------------------------ walk */

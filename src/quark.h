@@ -116,7 +116,13 @@ int quark_direct(const quark_session *s, const char *fid, char *url, size_t cap,
 
 /* Fills urls[k] for every fids[k] the service answered for, in the same order.
  * Returns how many were resolved, which may be fewer than n: a file the account
- * cannot download is skipped rather than failing the whole batch. */
+ * cannot download is skipped rather than failing the whole batch.
+ *
+ * How many fids are asked per request is not fixed: the service refuses a group
+ * with HTTP 400 in a way that depends on the account, and never says the number
+ * it will take. This function starts at the last size that worked and halves on
+ * a refusal, down to one fid per request - the one shape every account accepts,
+ * and the one the exFAT build used from the start. */
 int quark_direct_many(const quark_session *s, const char *const *fids, int n,
                       char urls[][QUARK_URL_MAX], char *err, size_t errcap);
 

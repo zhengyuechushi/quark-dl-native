@@ -238,6 +238,13 @@ websrv_listen(unsigned short port) {
                                 (size_t)HTTP_CONNECTION_MEMORY_LIMIT,
                                 MHD_OPTION_CONNECTION_MEMORY_INCREMENT,
                                 (size_t)HTTP_CONNECTION_MEMORY_INCREMENT,
+                                /* Adding a folder used to be one round trip and
+                                 * is now one per file when the service refuses
+                                 * the group, so a single request can stay open
+                                 * for minutes. The default timeout would cut
+                                 * the page off with the queue half filled and
+                                 * nothing written down. */
+                                MHD_OPTION_CONNECTION_TIMEOUT, (unsigned int)300,
                                 MHD_OPTION_NOTIFY_COMPLETED,
                                 &websrv_on_completed, NULL, MHD_OPTION_END))) {
     perror("MHD_start_daemon");

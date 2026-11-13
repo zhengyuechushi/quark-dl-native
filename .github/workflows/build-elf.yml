@@ -17,45 +17,68 @@ jobs:
           BUILD_ID: ${{ github.sha }}
         run: bash ps5/build.sh
 
+      - name: Resolve the versioned ELF name
+        id: elf
+        run: |
+          V=$(sed -n 's/^APP_VERSION := //p' Makefile | tr -d ' ')
+          test -n "$V"
+          echo "name=quark-dl_v$V.elf" >> "$GITHUB_OUTPUT"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
       - name: Verify ELF shape
+        env:
+          ELF: ${{ steps.elf.outputs.name }}
+          VER: ${{ steps.elf.outputs.version }}
         run: |
           set -e
-          test -s quark-dl.elf
-          ls -l quark-dl.elf
-          readelf -h quark-dl.elf | head -20
-          readelf -h quark-dl.elf | grep -q 'Type:.*DYN' || { echo "not a PIE"; exit 1; }
-          if readelf -l quark-dl.elf | grep -q INTERP; then echo "has INTERP"; exit 1; fi
-          grep -aqF "${{ github.sha }}" quark-dl.elf || { echo "build id missing"; exit 1; }
-          grep -aqF "quark-dl.elf" quark-dl.elf || { echo "process name missing"; exit 1; }
+          test -s "$ELF"
+          ls -l "$ELF"
+          readelf -h "$ELF" | head -20
+          readelf -h "$ELF" | grep -q 'Type:.*DYN' || { echo "not a PIE"; exit 1; }
+          if readelf -l "$ELF" | grep -q INTERP; then echo "has INTERP"; exit 1; fi
+          grep -aqF "${{ github.sha }}" "$ELF" || { echo "build id missing"; exit 1; }
+          grep -aqF "quark-dl.elf" "$ELF" || { echo "process name missing"; exit 1; }
+          # The version has to be inside the binary as well as in its name: the
+          # name is what Payload Manager shows, the string is what /api/health
+          # and the page report, and a build that disagrees with itself is worse
+          # than one with no version at all.
+          grep -aqF "$VER" "$ELF" || { echo "version string missing"; exit 1; }
           # Stage 2 links TLS and an embedded root store; both must be in the image.
-          grep -aqF "mbedtls" quark-dl.elf || { echo "TLS layer missing"; exit 1; }
-          grep -aqF "BEGIN CERTIFICATE" quark-dl.elf || { echo "root store missing"; exit 1; }
-          grep -aqF "/api/dl/add" quark-dl.elf || { echo "download API missing"; exit 1; }
+          grep -aqF "mbedtls" "$ELF" || { echo "TLS layer missing"; exit 1; }
+          grep -aqF "BEGIN CERTIFICATE" "$ELF" || { echo "root store missing"; exit 1; }
+          grep -aqF "/api/dl/add" "$ELF" || { echo "download API missing"; exit 1; }
           # Scan login went in as four endpoints taken from the official bundle;
           # if any of these strings is gone, the flow is gone.
-          grep -aqF "uop.quark.cn/cas/ajax/getTokenForQrcodeLogin" quark-dl.elf || { echo "qr token endpoint missing"; exit 1; }
-          grep -aqF "getServiceTicketByQrcodeToken" quark-dl.elf || { echo "qr poll endpoint missing"; exit 1; }
-          grep -aqF "4_eMHBJ" quark-dl.elf || { echo "qr page missing"; exit 1; }
-          grep -aqF "/api/quark/qr" quark-dl.elf || { echo "qr API missing"; exit 1; }
+          grep -aqF "uop.quark.cn/cas/ajax/getTokenForQrcodeLogin" "$ELF" || { echo "qr token endpoint missing"; exit 1; }
+          grep -aqF "getServiceTicketByQrcodeToken" "$ELF" || { echo "qr poll endpoint missing"; exit 1; }
+          grep -aqF "4_eMHBJ" "$ELF" || { echo "qr page missing"; exit 1; }
+          grep -aqF "/api/quark/qr" "$ELF" || { echo "qr API missing"; exit 1; }
           # Not "window.qrCode": assets are gzipped before they are embedded, so
           # only the registration path stays readable. The decompressed content is
           # checked by the smoke job, which fetches it over HTTP.
-          grep -aqF "/qrcode.js" quark-dl.elf || { echo "qr renderer missing"; exit 1; }
+          grep -aqF "/qrcode.js" "$ELF" || { echo "qr renderer missing"; exit 1; }
           # A direct link lives on a CDN that repeats the browser's anti-hotlink
           # checks. Without the client UA and a pan.quark.cn Referer the answer
           # is HTTP 412 even for a link that is seconds old, which is exactly
           # what the console reported before this was added.
-          grep -aqF "quark-cloud-drive/" quark-dl.elf || { echo "download UA missing"; exit 1; }
-          grep -aqF "Referer: https://pan.quark.cn/" quark-dl.elf || { echo "download Referer missing"; exit 1; }
+          grep -aqF "quark-cloud-drive/" "$ELF" || { echo "download UA missing"; exit 1; }
+          grep -aqF "Referer: https://pan.quark.cn/" "$ELF" || { echo "download Referer missing"; exit 1; }
+          # A folder has to end up in the queue even when the service refuses the
+          # group: the batch size is learned at run time and the fallback is one
+          # fid per request, which is the only shape proven to work.
+          grep -aqF "改成每次最多" "$ELF" || { echo "batch fallback missing"; exit 1; }
+          # A refusal must carry the service's own words, not just the status
+          # code: "HTTP 400" alone is what made the folder report unanswerable.
+          grep -aqF "（请求被拒）" "$ELF" || { echo "refusal body missing"; exit 1; }
           # The start-up trail. Its absence is how "no process on screen"
           # becomes an unanswerable report.
-          grep -aqF "boot.log" quark-dl.elf || { echo "boot log missing"; exit 1; }
+          grep -aqF "boot.log" "$ELF" || { echo "boot log missing"; exit 1; }
           echo "ok"
 
       - uses: actions/upload-artifact@v4
         with:
           name: quark-dl-elf
-          path: quark-dl.elf
+          path: ${{ steps.elf.outputs.name }}
           if-no-files-found: error
 
   # The console-specific parts (SYS_thr_set_name, sysctl, notifications) cannot be
