@@ -207,8 +207,21 @@ tls_start(net_conn *c, const char *host, char *err, size_t cap) {
     if(rc == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
       uint32_t flags = mbedtls_ssl_get_verify_result(&c->tls.ssl);
       char why[96];
+      size_t n;
+
       why[0] = 0;
       mbedtls_x509_crt_verify_info(why, sizeof(why), "", flags);
+      /* verify_info ends each line with a newline. Every caller of this string
+       * either puts it in JSON or on the page, so fold the newlines now
+       * instead of escaping the same text in three different places. */
+      for(n = 0; why[n]; n++) {
+        if(why[n] == '\n' || why[n] == '\r' || why[n] == '\t') {
+          why[n] = ' ';
+        }
+      }
+      while(n && why[n - 1] == ' ') {
+        why[--n] = 0;
+      }
       snprintf(err, cap, "证书校验失败: %s", why[0] ? why : "unknown");
       return -1;
     }

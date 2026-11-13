@@ -345,6 +345,12 @@ sink_write(void *ctx, const void *data, size_t len) {
   sink_ctx *s = (sink_ctx *)ctx;
   const char *p = (const char *)data;
 
+  /* An error page is not file content. Writing it would leave "gone" or an
+   * XML error document at the head of a .part file, and a later resume would
+   * happily append the real bytes behind it. */
+  if(s->res->status >= 300) {
+    return 0;
+  }
   if(s->first) {
     s->first = 0;
     /* 200 to a ranged request means the server ignored Range. Truncating now

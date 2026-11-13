@@ -384,9 +384,14 @@ api_net_selftest(struct MHD_Connection *conn) {
   char host[200];
   char path[400];
   char ip[64];
-  char json[1600];
-  char page[3600];
-  char escaped[1700];
+  char json[2400];
+  char page[4600];
+  char escaped[2500];
+  char eurl[520];
+  char ehost[220];
+  char etls[140];
+  char ecert[260];
+  char eerr[420];
   unsigned short port = 0;
   int tls = 0;
   long long t_dns = 0;
@@ -398,13 +403,17 @@ api_net_selftest(struct MHD_Connection *conn) {
 
   snprintf(url, sizeof(url), "%s",
            (arg && *arg) ? arg : "https://api.quark.cn/");
+  /* Escaped once, used by every answer below. The URL is whatever the user
+   * typed and the host is whatever it parsed to; either can carry a quote. */
+  json_escape(eurl, sizeof(eurl), url);
   memset(&res, 0, sizeof(res));
 
   if(http_url_parse(url, &tls, host, sizeof(host), &port, path, sizeof(path))) {
     snprintf(json, sizeof(json),
-             "{\"ok\":false,\"url\":\"%.400s\",\"error\":\"URL 无法解析\"}", url);
+             "{\"ok\":false,\"url\":\"%s\",\"error\":\"URL 无法解析\"}", eurl);
     return send_json(conn, MHD_HTTP_BAD_REQUEST, json);
   }
+  json_escape(ehost, sizeof(ehost), host);
 
   {
     long long mark = elapsed_ms();
@@ -413,9 +422,9 @@ api_net_selftest(struct MHD_Connection *conn) {
   }
   if(!dns_ok) {
     snprintf(json, sizeof(json),
-             "{\"ok\":false,\"url\":\"%.400s\",\"stage\":\"dns\",\"host\":\"%s\","
+             "{\"ok\":false,\"url\":\"%s\",\"stage\":\"dns\",\"host\":\"%s\","
              "\"error\":\"域名解析失败\",\"resolver\":\"%s\",\"dns_ms\":%lld}",
-             url, host, net_resolver(), t_dns);
+             eurl, ehost, net_resolver(), t_dns);
     return send_json(conn, MHD_HTTP_OK, json);
   }
 
@@ -430,16 +439,23 @@ api_net_selftest(struct MHD_Connection *conn) {
     t_http = elapsed_ms() - mark;
   }
 
+  /* The certificate subject comes off the wire and the failure text is whatever
+   * mbedTLS decided. Unescaped, either one turns this answer into invalid JSON,
+   * which the page then reports as "not JSON" — the exact symptom that hides
+   * the real network error. */
+  json_escape(etls, sizeof(etls), res.tls_info);
+  json_escape(ecert, sizeof(ecert), res.tls_subject);
+  json_escape(eerr, sizeof(eerr), res.err[0] ? res.err : "");
+
   snprintf(json, sizeof(json),
-           "{\"ok\":%s,\"url\":\"%.400s\",\"host\":\"%s\",\"ip\":\"%s\","
+           "{\"ok\":%s,\"url\":\"%s\",\"host\":\"%s\",\"ip\":\"%s\","
            "\"resolver\":\"%s\",\"dns_ms\":%lld,\"tls\":\"%s\",\"cert\":\"%s\","
            "\"cert_expires\":\"%s\",\"status\":%d,\"bytes\":%lld,"
            "\"connect_ms\":%lld,\"total_ms\":%lld,\"stage\":\"%s\",\"error\":\"%s\"}",
-           http_ok ? "true" : "false", url, host, ip, net_resolver(), t_dns,
-           res.tls_info[0] ? res.tls_info : "plain", res.tls_subject,
-           res.tls_expires, res.status, res.received, res.connect_ms, t_http,
-           http_ok ? "done" : (res.status ? "http" : "connect"),
-           res.err[0] ? res.err : "");
+           http_ok ? "true" : "false", eurl, ehost, ip, net_resolver(), t_dns,
+           etls, ecert, res.tls_expires, res.status, res.received,
+           res.connect_ms, t_http,
+           http_ok ? "done" : (res.status ? "http" : "connect"), eerr);
 
   if(!wants_html(conn)) {
     return send_json(conn, MHD_HTTP_OK, json);
