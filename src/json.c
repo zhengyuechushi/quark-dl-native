@@ -434,15 +434,17 @@ json_parse(const char *text, char *err, size_t cap) {
   return v;
 }
 
-void
-json_free(json_value *v) {
+/* Releases everything a value owns, but not the value itself. Array and object
+ * members live inside their parent's allocation, so handing &items[i] to free()
+ * would be freeing a pointer into the middle of a block - which aborts, and
+ * would have aborted on the first successful parse of any document. Only the
+ * root of a tree is separately allocated and may be freed. */
+static void
+free_contents(json_value *v) {
   int i;
 
-  if(!v) {
-    return;
-  }
   for(i = 0; i < v->count; i++) {
-    json_free(&v->items[i]);
+    free_contents(&v->items[i]);
     if(v->keys) {
       free(v->keys[i]);
     }
@@ -450,6 +452,18 @@ json_free(json_value *v) {
   free(v->items);
   free(v->keys);
   free(v->string);
+  v->items = NULL;
+  v->keys = NULL;
+  v->string = NULL;
+  v->count = 0;
+}
+
+void
+json_free(json_value *v) {
+  if(!v) {
+    return;
+  }
+  free_contents(v);
   free(v);
 }
 
