@@ -37,7 +37,10 @@ jobs:
           grep -aqF "getServiceTicketByQrcodeToken" quark-dl.elf || { echo "qr poll endpoint missing"; exit 1; }
           grep -aqF "4_eMHBJ" quark-dl.elf || { echo "qr page missing"; exit 1; }
           grep -aqF "/api/quark/qr" quark-dl.elf || { echo "qr API missing"; exit 1; }
-          grep -aqF "window.qrCode" quark-dl.elf || { echo "qr renderer missing"; exit 1; }
+          # Not "window.qrCode": assets are gzipped before they are embedded, so
+          # only the registration path stays readable. The decompressed content is
+          # checked by the smoke job, which fetches it over HTTP.
+          grep -aqF "/qrcode.js" quark-dl.elf || { echo "qr renderer missing"; exit 1; }
           echo "ok"
 
       - uses: actions/upload-artifact@v4
@@ -131,10 +134,12 @@ jobs:
           # The QR renderer is a second script; a 404 here is a blank scan panel
           # with no error anywhere in sight.
           echo "--- qrcode.js ---"
-          curl -fsS -D qr-ct.txt -o qrcode.js "$base/qrcode.js"
+          # --compressed matters: assets are stored gzipped and served with
+          # Content-Encoding, so a plain curl writes bytes that grep cannot see.
+          curl -fsS --compressed -D qr-ct.txt -o qrcode.js "$base/qrcode.js"
           grep -qi "javascript" qr-ct.txt
           grep -q "window.qrCode" qrcode.js
-          curl -fsS "$base/" | grep -q '/qrcode.js'
+          curl -fsS --compressed "$base/" | grep -q '/qrcode.js'
 
           echo "--- exit ---"
           curl -fsS -X POST "$base/api/exit"
