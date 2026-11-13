@@ -218,10 +218,40 @@ ID6=$(python3 -c "import json;print(json.load(open('$WORK/add6.json'))['ids'][0]
 test "$ID6" = "$ID" || fail "duplicate URL created a second task ($ID vs $ID6)"
 echo "same task id returned"
 
+say "re-adding a link whose file was deleted downloads it again"
+rm -f "$DEST/file"
+python3 - "$BASE" <<'PY'
+import json, sys, urllib.request
+d = json.load(urllib.request.urlopen(sys.argv[1] + '/api/dl/list', timeout=10))
+t = [x for x in d['tasks'] if x['name'] == 'file' and x['state'] == 'done'][0]
+assert t['exists'] is False, t
+print('exists=false for the deleted file, so the page can offer a re-download')
+PY
+curl -fsS -X POST --data-urlencode "url=http://127.0.0.1:${PLAIN_PORT}/file?size=300000" \
+  --data-urlencode "dir=$DEST" "$BASE/api/dl/add" >"$WORK/add7.json"
+cat "$WORK/add7.json"
+echo
+ID7=$(python3 -c "import json;print(json.load(open('$WORK/add7.json'))['ids'][0])")
+test "$ID7" = "$ID" || fail "re-adding the same url made a new task ($ID vs $ID7)"
+wait_state "$ID" done
+cmp "$expected" "$DEST/file" || fail "re-downloaded file differs"
+echo "downloaded again: $(wc -c <"$DEST/file") bytes"
+
+say "the retry endpoint requeues a finished task"
+curl -fsS -X POST "$BASE/api/dl/retry?id=$ID4" >"$WORK/retry.json"
+cat "$WORK/retry.json"
+echo
+python3 - "$WORK/retry.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d['queued'] == 1, d
+PY
+wait_state "$ID4" failed
+echo "retried and failed again, as it must for a 404"
+
 say "the queue is written to disk"
 test -s "$DATA/downloads.txt" || fail "queue was not persisted"
 grep -q 'http' "$DATA/downloads.txt" || fail "queue file has no url"
 echo "persisted $(wc -l <"$DATA/downloads.txt") task(s)"
-
 echo
 echo "all stage-2 checks passed"

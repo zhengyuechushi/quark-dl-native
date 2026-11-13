@@ -32,9 +32,17 @@ const char *dl_default_dir(void);
 int dl_set_default_dir(const char *dir, char *err, size_t cap);
 
 /* Queues one URL. `name` and `dir` may be NULL to use the URL's basename and
- * the default directory. Returns the task id, or -1 with err filled in. */
+ * the default directory. Returns the task id, or -1 with err filled in.
+ *
+ * Re-adding a URL that is still queued or running returns its id and changes
+ * nothing; re-adding one that has finished, failed or been canceled runs it
+ * again, which resumes from the .part file when one is there. */
 int dl_add(const char *url, const char *name, const char *dir, char *err,
            size_t cap);
+
+/* Puts a finished task back in the queue. id < 0 retries every finished task.
+ * Returns the number of tasks queued. */
+int dl_retry(int id);
 
 /* id < 0 cancels everything. Returns the number of tasks touched. */
 int dl_cancel(int id);

@@ -323,6 +323,20 @@ load_queue(void) {
     if(t->state == DL_RUNNING || t->state == DL_CANCELED) {
       t->state = DL_QUEUED;
     }
+    /* A task whose file is gone is not "done", whatever the queue file says.
+     * Saying so at load time keeps the list honest, and it is what gives the
+     * "重新下载" button something to mean. */
+    if(t->state == DL_DONE) {
+      char full[700];
+      struct stat st;
+
+      if(path_join(full, sizeof(full), t->dir, t->name, "") != 0 ||
+         stat(full, &st) != 0 || st.st_size <= 0) {
+        t->state = DL_FAILED;
+        t->done = 0;
+        snprintf(t->err, sizeof(t->err), "文件已不在了，可重新下载");
+      }
+    }
     if(t->id >= g_next_id) {
       g_next_id = t->id + 1;
     }
@@ -651,11 +665,48 @@ dl_add(const char *url, const char *name, const char *dir, char *err,
 
   pthread_mutex_lock(&g_lock);
   for(i = 0; i < g_count; i++) {
-    if(g_task[i].id && !strcmp(g_task[i].url, url)) {
-      id = g_task[i].id;
+    dl_task *e = &g_task[i];
+
+    if(!e->id || strcmp(e->url, url)) {
+      continue;
+    }
+    /* Already waiting or in flight: hand back the same task. Adding it twice
+     * would only download the same bytes twice. */
+    if(e->state == DL_QUEUED || (e->state == DL_RUNNING && !e->cancel)) {
+      id = e->id;
       pthread_mutex_unlock(&g_lock);
       return id;
     }
+    if(e->state == DL_RUNNING) {
+      /* Canceled a moment ago and the worker has not noticed yet. Clearing the
+       * flag lets it carry on instead of bouncing the user off with "it is
+       * still there" for a task that is visibly stopping. */
+      e->cancel = 0;
+      id = e->id;
+      pthread_mutex_unlock(&g_lock);
+      return id;
+    }
+    /* Done, failed or canceled: "add this link again" means run it again, not
+     * "there it is, still finished". The .part file, if one survived, is what
+     * turns that into a resume instead of a restart; if the finished file is
+     * still on disk dl_attempt reports it as already there and nothing is
+     * transferred. */
+    e->state = DL_QUEUED;
+    e->cancel = 0;
+    e->attempts = 0;
+    e->done = 0;
+    e->err[0] = 0;
+    if(name && *name) {
+      snprintf(e->name, sizeof(e->name), "%s", clean);
+    }
+    if(dir && dir[0] == '/') {
+      snprintf(e->dir, sizeof(e->dir), "%s", dir);
+    }
+    id = e->id;
+    pump_locked();
+    save_locked();
+    pthread_mutex_unlock(&g_lock);
+    return id;
   }
   for(i = 0; i < g_count; i++) {
     if(!g_task[i].id) {
@@ -706,6 +757,36 @@ dl_cancel(int id) {
       snprintf(t->err, sizeof(t->err), "已取消");
     }
     n++;
+  }
+  save_locked();
+  pthread_mutex_unlock(&g_lock);
+  return n;
+}
+
+int
+dl_retry(int id) {
+  int i;
+  int n = 0;
+
+  pthread_mutex_lock(&g_lock);
+  for(i = 0; i < g_count; i++) {
+    dl_task *t = &g_task[i];
+
+    if(!t->id || (id >= 0 && t->id != id)) {
+      continue;
+    }
+    if(t->state == DL_QUEUED || t->state == DL_RUNNING) {
+      continue;
+    }
+    t->state = DL_QUEUED;
+    t->cancel = 0;
+    t->attempts = 0;
+    t->done = 0;
+    t->err[0] = 0;
+    n++;
+  }
+  if(n) {
+    pump_locked();
   }
   save_locked();
   pthread_mutex_unlock(&g_lock);
@@ -786,6 +867,7 @@ dl_json(char *out, size_t cap) {
   pthread_mutex_lock(&g_lock);
   for(i = 0; i < g_count; i++) {
     dl_task *t = &g_task[i];
+    int exists = -1;
 
     if(!t->id) {
       continue;
@@ -795,10 +877,22 @@ dl_json(char *out, size_t cap) {
       return -1;
     }
     first = 0;
+    /* Only a finished task gets asked about its file; the answer is what the
+     * page uses to decide between "已完成" and "重新下载". */
+    if(t->state == DL_DONE) {
+      char full[700];
+      struct stat st;
+
+      exists = (path_join(full, sizeof(full), t->dir, t->name, "") == 0 &&
+                stat(full, &st) == 0 && st.st_size > 0)
+                 ? 1
+                 : 0;
+    }
     if(app(out, cap, &used,
            "{\"id\":%d,\"state\":\"%s\",\"attempts\":%d,\"done\":%lld,"
-           "\"total\":%lld,\"name\":",
-           t->id, state_name(t->state), t->attempts, t->done, t->total) < 0 ||
+           "\"total\":%lld,\"exists\":%s,\"name\":",
+           t->id, state_name(t->state), t->attempts, t->done, t->total,
+           exists < 0 ? "null" : (exists ? "true" : "false")) < 0 ||
        jstr(out, cap, &used, t->name) < 0 ||
        app(out, cap, &used, ",\"dir\":") < 0 ||
        jstr(out, cap, &used, t->dir) < 0 ||

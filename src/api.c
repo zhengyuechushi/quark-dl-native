@@ -384,13 +384,14 @@ api_net_selftest(struct MHD_Connection *conn) {
   char host[200];
   char path[400];
   char ip[64];
-  char json[2400];
-  char page[4600];
-  char escaped[2500];
+  char json[2800];
+  char page[5800];
+  char escaped[2900];
   char eurl[520];
   char ehost[220];
   char etls[140];
   char ecert[260];
+  char eissuer[260];
   char eerr[420];
   unsigned short port = 0;
   int tls = 0;
@@ -445,15 +446,17 @@ api_net_selftest(struct MHD_Connection *conn) {
    * the real network error. */
   json_escape(etls, sizeof(etls), res.tls_info);
   json_escape(ecert, sizeof(ecert), res.tls_subject);
+  json_escape(eissuer, sizeof(eissuer), res.tls_issuer);
   json_escape(eerr, sizeof(eerr), res.err[0] ? res.err : "");
 
   snprintf(json, sizeof(json),
            "{\"ok\":%s,\"url\":\"%s\",\"host\":\"%s\",\"ip\":\"%s\","
            "\"resolver\":\"%s\",\"dns_ms\":%lld,\"tls\":\"%s\",\"cert\":\"%s\","
-           "\"cert_expires\":\"%s\",\"status\":%d,\"bytes\":%lld,"
-           "\"connect_ms\":%lld,\"total_ms\":%lld,\"stage\":\"%s\",\"error\":\"%s\"}",
+           "\"cert_issuer\":\"%s\",\"cert_expires\":\"%s\",\"status\":%d,"
+           "\"bytes\":%lld,\"connect_ms\":%lld,\"total_ms\":%lld,"
+           "\"stage\":\"%s\",\"error\":\"%s\"}",
            http_ok ? "true" : "false", eurl, ehost, ip, net_resolver(), t_dns,
-           etls, ecert, res.tls_expires, res.status, res.received,
+           etls, ecert, eissuer, res.tls_expires, res.status, res.received,
            res.connect_ms, t_http,
            http_ok ? "done" : (res.status ? "http" : "connect"), eerr);
 
@@ -688,6 +691,21 @@ api_dl_cancel(struct MHD_Connection *conn, const char *method) {
 }
 
 static enum MHD_Result
+api_dl_retry(struct MHD_Connection *conn, const char *method) {
+  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
+  char body[160];
+  int n;
+
+  if(strcmp(method, MHD_HTTP_METHOD_POST)) {
+    return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
+                     "{\"ok\":false,\"error\":\"use POST\"}");
+  }
+  n = dl_retry(arg ? atoi(arg) : -1);
+  snprintf(body, sizeof(body), "{\"ok\":true,\"queued\":%d}", n);
+  return send_json(conn, MHD_HTTP_OK, body);
+}
+
+static enum MHD_Result
 api_dl_clear(struct MHD_Connection *conn, const char *method) {
   char body[120];
 
@@ -884,6 +902,23 @@ api_init(void) {
     fprintf(stderr, "quark-dl: 网络层初始化失败: %s\n", err);
   }
   dl_init(data_dir());
+  /* <data>/ca.pem is the console's only way to add a root: there is no shell to
+   * export QDL_CA_FILE from. Missing file is the normal case, not an error. */
+  {
+    char ca[400];
+    char why[220];
+
+    snprintf(ca, sizeof(ca), "%s/ca.pem", data_dir());
+    if(access(ca, R_OK) == 0) {
+      int added = net_add_ca(ca, why, sizeof(why));
+
+      if(added > 0) {
+        fprintf(stderr, "quark-dl: 已附加 %d 张证书: %s\n", added, ca);
+      } else {
+        fprintf(stderr, "quark-dl: %s\n", why);
+      }
+    }
+  }
 }
 
 void
@@ -937,6 +972,9 @@ api_request(struct MHD_Connection *conn, const char *url, const char *method,
   }
   if(!strcmp(path, "/api/dl/cancel")) {
     return api_dl_cancel(conn, method);
+  }
+  if(!strcmp(path, "/api/dl/retry")) {
+    return api_dl_retry(conn, method);
   }
   if(!strcmp(path, "/api/dl/clear")) {
     return api_dl_clear(conn, method);

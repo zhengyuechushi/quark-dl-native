@@ -268,6 +268,7 @@
     meta.className = 'meta';
     var line = fmtSize(t.done) + (t.total > 0 ? ' / ' + fmtSize(t.total) : '');
     if (t.state === 'running' && t.attempts > 1) line += ' · 第 ' + t.attempts + ' 次尝试';
+    if (t.state === 'done' && t.exists === false && !t.err) line += ' · 文件已不在，可重新下载';
     meta.textContent = line + (t.err ? ' · ' + t.err : '');
     box.appendChild(meta);
 
@@ -291,6 +292,18 @@
         json('POST', '/api/dl/cancel?id=' + t.id, '', function () { pollQueue(); });
       };
       box.appendChild(cancel);
+    } else if (t.state === 'failed' || t.state === 'canceled' ||
+               (t.state === 'done' && t.exists === false)) {
+      /* 失败的链接多半是过期了；已完成但文件被删了，同一句话：再下一次。 */
+      var again = document.createElement('button');
+      again.className = 'small';
+      again.style.marginTop = '8px';
+      again.textContent = '重新下载';
+      again.onclick = function () {
+        again.disabled = true;
+        json('POST', '/api/dl/retry?id=' + t.id, '', function () { pollQueue(); });
+      };
+      box.appendChild(again);
     }
     return box;
   }
@@ -331,7 +344,9 @@
       lines.push((d.ok ? '✓ ' : '✗ ') + (d.host || '') + (d.ip ? ' → ' + d.ip : '') +
         (d.resolver ? '（' + d.resolver + '，' + d.dns_ms + ' ms）' : ''));
       if (d.tls && d.tls !== 'plain') {
-        lines.push('  TLS ' + d.tls + (d.cert ? ' · ' + d.cert : '') + (d.cert_expires ? ' · 到期 ' + d.cert_expires : ''));
+        lines.push('  ' + d.tls);
+        if (d.cert) lines.push('  服务器证书 ' + d.cert + (d.cert_expires ? ' · 到期 ' + d.cert_expires : ''));
+        if (d.cert_issuer) lines.push('  签发者   ' + d.cert_issuer);
       } else if (d.tls === 'plain') {
         lines.push('  明文 HTTP（没有 TLS）');
       }

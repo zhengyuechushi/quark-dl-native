@@ -28,6 +28,7 @@ typedef struct {
   char final_url[1024];
   char tls_info[96];       /* "TLSv1.3 / <cipher>", or "plain" */
   char tls_subject[128];
+  char tls_issuer[128];
   char tls_expires[24];
   char err[220];           /* transport-level failure, "" when none */
 } http_result;

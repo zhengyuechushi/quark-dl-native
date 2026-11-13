@@ -148,10 +148,16 @@ ssl_recv(void *ctx, unsigned char *buf, size_t len) {
 static void
 tls_describe(net_conn *c) {
   const mbedtls_x509_crt *peer;
+  const char *ver;
+  const char *suite;
   char dn[128];
 
-  snprintf(c->info, sizeof(c->info), "%s / %s", mbedtls_ssl_get_version(&c->tls.ssl),
-           mbedtls_ssl_get_ciphersuite(&c->tls.ssl));
+  /* Either of these can be NULL once a handshake has failed early, so they are
+   * never handed to printf unguarded. */
+  ver = mbedtls_ssl_get_version(&c->tls.ssl);
+  suite = mbedtls_ssl_get_ciphersuite(&c->tls.ssl);
+  snprintf(c->info, sizeof(c->info), "%s / %s", ver ? ver : "TLS",
+           suite ? suite : "未协商");
   peer = mbedtls_ssl_get_peer_cert(&c->tls.ssl);
   if(!peer) {
     return;
@@ -164,6 +170,53 @@ tls_describe(net_conn *c) {
   }
   snprintf(c->expires, sizeof(c->expires), "%04d-%02d-%02d", peer->valid_to.year,
            peer->valid_to.mon, peer->valid_to.day);
+}
+
+/* Spells out why a certificate was rejected. The bit values are the verified
+ * ones from mbedtls x509_crt.h (BADCERT_*); they are written as literals rather
+ * than macros so a header that renames one cannot break the console build. */
+static void
+verify_reasons(uint32_t flags, char *out, size_t cap) {
+  static const struct {
+    uint32_t bit;
+    const char *label;
+  } table[] = {
+    {0x00000001, "证书已过期"},
+    {0x00000002, "证书已被吊销"},
+    {0x00000004, "证书名字与访问的域名不一致"},
+    {0x00000008, "签发它的 CA 不在信任库里"},
+    {0x00000200, "证书的生效时间还没到（主机时间可能不对）"},
+    {0x00000800, "证书用途不允许用于 TLS"},
+    {0x00001000, "证书扩展用途不允许用于 TLS"},
+    {0x00004000, "证书的签名算法不被接受"},
+    {0x00008000, "证书的公钥算法不被接受"},
+    {0x00010000, "证书的公钥不可接受"},
+  };
+  size_t used = 0;
+  unsigned i;
+
+  out[0] = 0;
+  for(i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
+    size_t n;
+
+    if(!(flags & table[i].bit)) {
+      continue;
+    }
+    n = strlen(table[i].label);
+    if(used + n + 4 >= cap) {
+      break;
+    }
+    if(used) {
+      memcpy(out + used, "、", 3); /* U+3001, three bytes in UTF-8 */
+      used += 3;
+    }
+    memcpy(out + used, table[i].label, n);
+    used += n;
+  }
+  out[used] = 0;
+  if(!used) {
+    snprintf(out, cap, "原因未归类");
+  }
 }
 
 static int
@@ -206,23 +259,14 @@ tls_start(net_conn *c, const char *host, char *err, size_t cap) {
      * console with a wrong clock or a missing root looks like. */
     if(rc == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
       uint32_t flags = mbedtls_ssl_get_verify_result(&c->tls.ssl);
-      char why[96];
-      size_t n;
+      char why[200];
 
-      why[0] = 0;
-      mbedtls_x509_crt_verify_info(why, sizeof(why), "", flags);
-      /* verify_info ends each line with a newline. Every caller of this string
-       * either puts it in JSON or on the page, so fold the newlines now
-       * instead of escaping the same text in three different places. */
-      for(n = 0; why[n]; n++) {
-        if(why[n] == '\n' || why[n] == '\r' || why[n] == '\t') {
-          why[n] = ' ';
-        }
-      }
-      while(n && why[n - 1] == ' ') {
-        why[--n] = 0;
-      }
-      snprintf(err, cap, "证书校验失败: %s", why[0] ? why : "unknown");
+      /* Capture what the server actually presented before unwinding: after this
+       * return the caller only has a sentence, and "which certificate" is the
+       * one thing that separates a wrong clock from an intercepting proxy. */
+      tls_describe(c);
+      verify_reasons(flags, why, sizeof(why));
+      snprintf(err, cap, "证书校验失败 [0x%08lx]: %s", (unsigned long)flags, why);
       return -1;
     }
     tls_error(err, cap, "TLS 握手失败", rc);
@@ -246,6 +290,20 @@ tls_free(net_conn *c) {
 }
 
 #endif /* QDL_TLS */
+
+#ifdef QDL_TLS
+/* Root count and whether anything was added on top of the embedded bundle; the
+ * status line is rebuilt from these so it never claims 118 roots after three
+ * more arrived from disk. */
+static unsigned g_roots;
+static int g_extra;
+
+static void
+status_refresh(void) {
+  snprintf(g_status, sizeof(g_status), "%s, %u 个根证书%s", g_tls_version, g_roots,
+           g_extra ? "（含附加证书）" : "");
+}
+#endif
 
 int
 net_init(char *err, size_t cap) {
@@ -284,14 +342,45 @@ net_init(char *err, size_t cap) {
     roots += (unsigned)added;
   }
   g_ca_ready = 1;
-  snprintf(g_status, sizeof(g_status), "%s, %u 个根证书%s", g_tls_version, roots,
-           (extra && *extra) ? " (+QDL_CA_FILE)" : "");
+  g_roots = roots;
+  g_extra = (extra && *extra) ? 1 : 0;
+  status_refresh();
   return 0;
 #else
   (void)err;
   (void)cap;
   snprintf(g_status, sizeof(g_status), "未编译 TLS（只能访问 http://）");
   return 0;
+#endif
+}
+
+/* The console has no environment to put QDL_CA_FILE in, so the same escape
+ * hatch also reads a PEM from the data directory: copy the interception root
+ * there over FTP and reload, instead of rebuilding the ELF. Adding trust is the
+ * only thing this can do. */
+int
+net_add_ca(const char *path, char *err, size_t cap) {
+#ifdef QDL_TLS
+  int added;
+
+  err[0] = 0;
+  if(!g_ca_ready) {
+    snprintf(err, cap, "TLS 尚未初始化");
+    return -1;
+  }
+  added = mbedtls_x509_crt_parse_file(&g_ca, path);
+  if(added < 0) {
+    snprintf(err, cap, "%s 解析失败 (-0x%04x)", path, (unsigned)-added);
+    return -1;
+  }
+  g_roots += (unsigned)added;
+  g_extra = 1;
+  status_refresh();
+  return added;
+#else
+  (void)path;
+  snprintf(err, cap, "此构建不含 TLS");
+  return -1;
 #endif
 }
 
@@ -588,14 +677,28 @@ connect_to(const char *ip, unsigned short port, int timeout_ms, char *err,
   return fd;
 }
 
+static void
+peer_copy(net_peer *p, const net_conn *c) {
+  if(!p) {
+    return;
+  }
+  snprintf(p->info, sizeof(p->info), "%s", c->info);
+  snprintf(p->subject, sizeof(p->subject), "%s", c->subject);
+  snprintf(p->issuer, sizeof(p->issuer), "%s", c->issuer);
+  snprintf(p->expires, sizeof(p->expires), "%s", c->expires);
+}
+
 net_conn *
 net_dial(const char *host, unsigned short port, int use_tls, int timeout_ms,
-         char *err, size_t cap) {
+         char *err, size_t cap, net_peer *peer) {
   char ip[64];
   net_conn *c;
   int fd;
 
   err[0] = 0;
+  if(peer) {
+    memset(peer, 0, sizeof(*peer));
+  }
 #ifdef QDL_TLS
   if(use_tls && !g_ca_ready) {
     snprintf(err, cap, "TLS 未就绪: %s", g_status);
@@ -626,6 +729,9 @@ net_dial(const char *host, unsigned short port, int use_tls, int timeout_ms,
   snprintf(c->info, sizeof(c->info), "plain");
 #ifdef QDL_TLS
   if(use_tls && tls_start(c, host, err, cap)) {
+    /* The connection is dead but the certificate is not: hand it to the caller
+     * so the error can say whose certificate was refused. */
+    peer_copy(peer, c);
     tls_free(c);
     close(fd);
     free(c);
@@ -634,6 +740,7 @@ net_dial(const char *host, unsigned short port, int use_tls, int timeout_ms,
 #else
   (void)use_tls;
 #endif
+  peer_copy(peer, c);
   return c;
 }
 

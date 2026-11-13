@@ -379,6 +379,7 @@ http_perform(const http_req *req, http_result *out) {
     char line[HLINE_MAX];
     size_t used = 0;
     net_conn *c;
+    net_peer peer;
     reader r;
     int chunked = 0;
     int no_body;
@@ -407,21 +408,24 @@ http_perform(const http_req *req, http_result *out) {
     out->ctype[0] = 0;
     out->err[0] = 0;
 
+    memset(&peer, 0, sizeof(peer));
     {
       long long t_conn = now_ms();
 
-      c = net_dial(host, port, tls, timeout, out->err, sizeof(out->err));
+      c = net_dial(host, port, tls, timeout, out->err, sizeof(out->err), &peer);
       out->connect_ms = now_ms() - t_conn;
     }
+    /* Copied before the failure check: when a certificate is refused the peer
+     * is the only record of what answered, and that is what makes the report
+     * actionable. */
+    snprintf(out->tls_info, sizeof(out->tls_info), "%s", peer.info);
+    snprintf(out->tls_subject, sizeof(out->tls_subject), "%s", peer.subject);
+    snprintf(out->tls_issuer, sizeof(out->tls_issuer), "%s", peer.issuer);
+    snprintf(out->tls_expires, sizeof(out->tls_expires), "%s", peer.expires);
     if(!c) {
       out->total_ms = now_ms() - t_start;
       return -1;
     }
-    /* Kept on the result so /api/net/selftest can show which certificate the
-     * console actually accepted, instead of "TLS 成功" and nothing else. */
-    snprintf(out->tls_info, sizeof(out->tls_info), "%s", net_info(c));
-    snprintf(out->tls_subject, sizeof(out->tls_subject), "%s", net_cert_subject(c));
-    snprintf(out->tls_expires, sizeof(out->tls_expires), "%s", net_cert_expires(c));
 
     rc = app(head, sizeof(head), &used, "%s %s HTTP/1.1\r\n", method, path);
     if(!rc) {
