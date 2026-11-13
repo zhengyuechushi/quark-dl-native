@@ -11,7 +11,7 @@
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates make curl unzip python3 pkg-config clang lld \
+    ca-certificates make curl unzip python3 pkg-config clang llvm lld \
     file binutils \
     && rm -rf /var/lib/apt/lists/*
 
@@ -24,10 +24,14 @@ RUN curl -fsSL --proto =https --retry 3 "$SDK_URL" -o /tmp/sdk.zip \
     && unzip -q /tmp/sdk.zip -d /opt && rm /tmp/sdk.zip \
     && test -x "$PS5_PAYLOAD_SDK/bin/prospero-clang"
 
-# Fail here, with the compiler's own message, rather than inside configure.
+# prospero-clang -> bin/clang -> prospero-llvm -> $(llvm-config --bindir)/clang.
+# Without llvm-config that chain dead-ends with a bare exit 1 and no message, which is
+# what "prospero-clang cannot link a trivial program" was reporting.
 RUN printf 'int main(void){return 0;}\n' > /tmp/t.c \
-    && "$PS5_PAYLOAD_SDK/bin/prospero-clang" /tmp/t.c -o /tmp/t || \
-       (echo "prospero-clang cannot link a trivial program" >&2; exit 1)
+    && llvm-config --version \
+    && clang --version | head -1 \
+    && "$PS5_PAYLOAD_SDK/bin/prospero-clang" /tmp/t.c -o /tmp/t \
+    && file /tmp/t
 
 COPY install-libmicrohttpd.sh /tmp/install-libmicrohttpd.sh
 RUN bash /tmp/install-libmicrohttpd.sh \
