@@ -31,6 +31,13 @@ jobs:
           grep -aqF "mbedtls" quark-dl.elf || { echo "TLS layer missing"; exit 1; }
           grep -aqF "BEGIN CERTIFICATE" quark-dl.elf || { echo "root store missing"; exit 1; }
           grep -aqF "/api/dl/add" quark-dl.elf || { echo "download API missing"; exit 1; }
+          # Scan login went in as four endpoints taken from the official bundle;
+          # if any of these strings is gone, the flow is gone.
+          grep -aqF "uop.quark.cn/cas/ajax/getTokenForQrcodeLogin" quark-dl.elf || { echo "qr token endpoint missing"; exit 1; }
+          grep -aqF "getServiceTicketByQrcodeToken" quark-dl.elf || { echo "qr poll endpoint missing"; exit 1; }
+          grep -aqF "4_eMHBJ" quark-dl.elf || { echo "qr page missing"; exit 1; }
+          grep -aqF "/api/quark/qr" quark-dl.elf || { echo "qr API missing"; exit 1; }
+          grep -aqF "window.qrCode" quark-dl.elf || { echo "qr renderer missing"; exit 1; }
           echo "ok"
 
       - uses: actions/upload-artifact@v4
@@ -121,6 +128,14 @@ jobs:
           curl -fsS "$base/" | head -c 120
           echo
 
+          # The QR renderer is a second script; a 404 here is a blank scan panel
+          # with no error anywhere in sight.
+          echo "--- qrcode.js ---"
+          curl -fsS -D qr-ct.txt -o qrcode.js "$base/qrcode.js"
+          grep -qi "javascript" qr-ct.txt
+          grep -q "window.qrCode" qrcode.js
+          curl -fsS "$base/" | grep -q '/qrcode.js'
+
           echo "--- exit ---"
           curl -fsS -X POST "$base/api/exit"
           echo
@@ -148,6 +163,16 @@ jobs:
           cc -std=c11 -Wall -Wextra -Werror -Isrc -o /tmp/test-json \
              tools/test-json.c src/json.c
           /tmp/test-json
+
+      # The cookie parser is what stands between a user and a working login.
+      # It cannot be tested against a live account, and every way it can be
+      # wrong looks the same from the outside: a 401 that reads as "not logged
+      # in" rather than "the paste was mangled".
+      - name: Cookie paste and jar
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -Isrc -o /tmp/test-cookie \
+             tools/test-cookie.c src/cookie.c
+          /tmp/test-cookie
 
       - name: Log on failure
         if: failure()

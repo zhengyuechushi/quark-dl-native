@@ -15,6 +15,8 @@
 #define QUARK_FID_MAX 48
 #define QUARK_NAME_MAX 256
 #define QUARK_URL_MAX 2048
+/* The PC web client's own id. Everything in the scan flow is built around it. */
+#define QUARK_CLIENT_ID "532"
 /* Every business call carries these. The service uses them to tell a PC client
  * apart from a phone, and a request without them can be answered differently. */
 #define QUARK_COMMON "pr=ucpro&fr=pc"
@@ -49,11 +51,32 @@ void quark_logout(void);
 const char *quark_last_raw(void);
 const char *quark_last_error(void);
 
-/* Accepts whatever a user pastes: a bare "a=b; c=d" string, or a full
- * "Cookie: a=b; c=d" line copied out of the developer tools. Rejects input that
- * obviously is not a cookie instead of storing rubbish that fails later with a
- * misleading 401. */
+/* Accepts whatever a user pastes: a bare "a=b; c=d" string, a full
+ * "Cookie: a=b; c=d" header line, a whole request header block, or a cURL
+ * command copied with "Copy as cURL". Rejects input that obviously is not a
+ * cookie instead of storing rubbish that fails later with a misleading 401. */
 int quark_set_cookie(const char *raw, quark_session *s, char *err, size_t cap);
+
+/* Comma-separated names of the cookies in `cookie`, values omitted. This is
+ * display data: seeing "__pus,__puus,__kp" proves the paste arrived, and an
+ * empty list proves it did not. Returns the number of names found. */
+int quark_cookie_keys(const char *cookie, char *out, size_t cap, int *count);
+
+/* Scan login, in two calls because the phone is in the middle of it.
+ *
+ * quark_qr_new asks for a one-shot token and returns both the token to poll
+ * with and the URL the QR image encodes. quark_qr_poll is then called every two
+ * seconds; on QUARK_QR_OK the session has been exchanged, saved, and is ready
+ * for every other call in this header. */
+#define QUARK_QR_WAITING 0
+#define QUARK_QR_OK 1
+#define QUARK_QR_EXPIRED 2
+
+int quark_qr_new(char *url, size_t urlcap, char *token, size_t tokcap,
+                 char *err, size_t errcap);
+/* Returns a QUARK_QR_* code, or -1 with err set on a transport or protocol
+ * failure. An unknown status code is a failure, not a reason to keep polling. */
+int quark_qr_poll(const char *token, quark_session *s, char *err, size_t errcap);
 
 /* Asks the service who we are. Fills nickname and quota when it can. */
 int quark_whoami(quark_session *s, char *err, size_t cap);

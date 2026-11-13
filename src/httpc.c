@@ -7,6 +7,8 @@
 
 #include "httpc.h"
 
+#include "cookie.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -522,6 +524,9 @@ http_perform(const http_req *req, http_result *out) {
         trim_copy(out->ctype, sizeof(out->ctype), line + 13);
       } else if(!strncasecmp(line, "Location:", 9)) {
         trim_copy(out->location, sizeof(out->location), line + 9);
+      } else if(!strncasecmp(line, "Set-Cookie:", 11)) {
+        cookie_jar_put(out->set_cookie, sizeof(out->set_cookie),
+                       line + 11);
       } else if(!strncasecmp(line, "Transfer-Encoding:", 18)) {
         if(ci_contains(line + 18, "chunked")) {
           chunked = 1;

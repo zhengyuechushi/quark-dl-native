@@ -49,6 +49,12 @@
   label.field { display: block; margin: 12px 0 6px; color: #8b97a5; font-size: 12.5px; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; align-items: center; }
   .note { color: #6b7683; font-size: 12.5px; line-height: 1.7; margin-top: 10px; }
+  details.help { margin-top: 14px; border-top: 1px solid #232a33; padding-top: 10px; }
+  details.help > summary { color: #8b97a5; font-size: 12.5px; cursor: pointer; }
+  details.help > summary:hover { color: #c9d2dc; }
+  .qr-box { display: flex; flex-direction: column; align-items: center; margin-top: 14px; }
+  .qr-box canvas { background: #fff; border-radius: 8px; padding: 12px; max-width: 100%; }
+  .qr-box canvas:not([width]) { display: none; }
   code { background: #1c2229; border: 1px solid #232a33; border-radius: 5px; padding: 1px 6px; font-size: 12.5px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4ade80; margin-right: 7px; vertical-align: 1px; }
   .dot.off { background: #f87171; }
@@ -110,19 +116,41 @@
   <div class="card">
     <h2>夸克账号</h2>
     <div class="row"><span class="k">状态</span><span class="v" id="qStateV">未登录</span></div>
-    <label class="field">Cookie（从浏览器开发者工具复制，整行粘进来）</label>
-    <textarea id="qCookie" placeholder="__pus=…; __puus=…; …" spellcheck="false"></textarea>
+    <div class="qr-box">
+      <canvas id="qrCanvas" width="0" height="0"></canvas>
+      <p class="note" id="qrHint" style="margin:8px 0 0">点下面的「扫码登录」，然后用手机上的夸克 App 扫这个码。</p>
+    </div>
     <div class="toolbar">
-      <button id="qLogin">登录</button>
+      <button id="qQr">扫码登录</button>
       <button id="qLogout" class="small">退出登录</button>
       <button id="qProbe" class="small">看原始 JSON</button>
       <span class="muted" id="qMsg"></span>
     </div>
-    <p class="note">
-      在电脑浏览器登录 <code>pan.quark.cn</code>，按 F12 → Network → 点任意一个请求 → 复制请求头里
-      <code>Cookie:</code> 那整行的值，粘到上面点登录。cookie 存在
-      <code>/data/quark-dl/cookie.txt</code>（权限 600）。它等同于登录凭证，别外传。
-    </p>
+    <details class="help">
+      <summary>扫不了码？改用粘贴 Cookie</summary>
+      <p class="note">二维码是夸克官方登录页生成的，手机端扫不上时（网络、版本、摄像头），
+      可以改从电脑浏览器取一次 Cookie，一样能登录。</p>
+      <label class="field">Cookie —— 下面几种粘法都认</label>
+      <textarea id="qCookie" placeholder="&#9312; __pus=…; __puus=…;&#10;&#9313; Cookie: __pus=…; __puus=…&#10;&#9314; 整块请求头&#10;&#9315; curl 'https://drive-pc.quark.cn/…' -H 'cookie: …'" spellcheck="false"></textarea>
+      <div class="toolbar">
+        <button id="qLogin" class="small">用这段 Cookie 登录</button>
+        <span class="muted" id="qCookieMsg"></span>
+      </div>
+      <p class="note">先在电脑浏览器登录 <code>pan.quark.cn</code>，按 F12 打开开发者工具，
+      切到 <b>Network</b>，然后按 F5 刷新一次页面。在筛选框里打 <code>clouddrive</code>，
+      点其中一条 <b>Status 是 200</b> 的请求（名字多为 <code>sort</code>、<code>member</code>）。</p>
+      <p class="note"><b>办法一，最省事：</b>右键那条请求 → Copy → <b>Copy as cURL (bash)</b>，
+      整段粘到上面。里面的 <code>-H 'cookie: …'</code> 会被自动揪出来，不用自己找。</p>
+      <p class="note"><b>办法二：</b>在右侧 Headers 面板里找 <code>Cookie:</code> 那一行，复制冒号后面的值。
+      如果面板上写着「Provisional headers are shown」，说明这条请求根本没发出去（或来自缓存），
+      上面就只有 Dnt、Referer 之类，没有 Cookie——换一条请求，或者直接用办法一。</p>
+      <p class="note"><b>办法三：</b>Application（应用）→ Storage → Cookies →
+      <code>https://pan.quark.cn</code>，把 <code>__pus</code>、<code>__puus</code>、<code>__kp</code>、
+      <code>__kps</code>、<code>__uid</code> 这些行按 <code>名字=值; 名字=值</code> 拼起来。
+      HttpOnly 的项在 Application 里照样能看到值，<code>document.cookie</code> 看不到，别在控制台里取。</p>
+      <p class="note">cookie 存在 <code>/data/quark-dl/cookie.txt</code>（权限 600）。
+      它等同于登录凭证，别外传；不想留了在页面上点「退出登录」就会删掉。</p>
+    </details>
     <div class="result" id="qRaw" style="display:none"></div>
   </div>
 
@@ -176,6 +204,7 @@
   </p>
 </div>
 
+<script src="/qrcode.js"></script>
 <script>
 (function () {
   var el = function (id) { return document.getElementById(id); };
@@ -463,6 +492,117 @@
 
   function qSetSel() { text('qSel', '已选 ' + qCount() + ' 项'); }
 
+  /* ----- 扫码登录 ----- */
+
+  /* The QR image is the official one: getTokenForQrcodeLogin hands out a token,
+   * su.quark.cn/:token is what the phone reads, and the server does the polling
+   * and the ticket-for-cookie exchange. The page never sees a credential here -
+   * it holds a token that expires in two minutes and nothing else. */
+  var qrToken = null;
+  var qrTimer = null;
+  var qrBusy = false;
+  var qrDeadline = 0;
+
+  function qrStop() {
+    if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+    qrBusy = false;
+  }
+
+  function qrClear() {
+    qrStop();
+    qrToken = null;
+    el('qrCanvas').width = 0;
+    el('qrCanvas').height = 0;
+  }
+
+  function qrDraw(url) {
+    var cv = el('qrCanvas');
+    var m = window.qrCode.encode(url);
+    if (!m) { text('qMsg', '二维码内容太长，编码失败'); return false; }
+    var quiet = 4;                        /* 静默区：扫码器要求，缺了容易扫不上 */
+    var px = 8;                           /* 单模块像素，57 格的码约 520 px */
+    var span = m.size + quiet * 2;
+    cv.width = span * px;
+    cv.height = span * px;
+    var ctx = cv.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#000000';
+    /* 每行把连续的深色模块合成一个矩形。57x57 逐格画是三千多次调用，
+     * 合并之后两百次左右，电视上的浏览器才不会卡一下。 */
+    for (var y = 0; y < m.size; y++) {
+      var x = 0;
+      while (x < m.size) {
+        if (m.modules[y * m.size + x] !== 1) { x++; continue; }
+        var start = x;
+        while (x < m.size && m.modules[y * m.size + x] === 1) x++;
+        ctx.fillRect((start + quiet) * px, (y + quiet) * px, (x - start) * px, px);
+      }
+    }
+    return true;
+  }
+
+  function qrExpired(msg) {
+    qrClear();
+    text('qMsg', msg);
+    text('qrHint', '码的有效期是两分钟。重新点「扫码登录」拿一张新的。');
+  }
+
+  function qrPoll() {
+    if (!qrToken || qrBusy) return;       /* 上一次还没回来，别排队 */
+    if (Date.now() > qrDeadline) {
+      qrExpired('二维码已过期');
+      return;
+    }
+    qrBusy = true;
+    json('GET', '/api/quark/qr?act=poll&token=' + encodeURIComponent(qrToken), null,
+      function (err, d) {
+        qrBusy = false;
+        if (!qrToken) return;             /* 期间已经重新开始或退出 */
+        if (err) { text('qMsg', '查询扫码状态失败：' + err.message); return; }
+        if (!d.ok) {
+          qrClear();
+          text('qMsg', '扫码失败');
+          qShowRaw(d.error || '');
+          return;
+        }
+        if (d.state === 'waiting') return;
+        if (d.state === 'expired') {
+          qrExpired('二维码已过期');
+          return;
+        }
+        qrClear();
+        qShowRaw('');
+        text('qrHint', '已登录，下面就是网盘根目录。');
+        text('qMsg', '扫码成功');
+        text('qStateV', (d.nickname || '已登录') +
+          (d.total_bytes ? ' · 共 ' + fmtSize(d.total_bytes) +
+            '，已用 ' + fmtSize(d.used_bytes) : ''));
+        qPath = [{ fid: '0', name: '根目录' }];
+        qSel = {};
+        qSetSel();
+        qLoad();
+      }, 20000);
+  }
+
+  el('qQr').onclick = function () {
+    qrClear();
+    qShowRaw('');
+    text('qMsg', '正在取二维码…');
+    text('qrHint', '');
+    json('GET', '/api/quark/qr?act=start', null, function (err, d) {
+      if (err) { text('qMsg', '取二维码失败：' + err.message); return; }
+      if (!d.ok) { text('qMsg', '取二维码失败'); qShowRaw(d.error || ''); return; }
+      qrToken = d.token;
+      if (!qrDraw(d.url)) { qrToken = null; return; }
+      text('qMsg', '等待扫码');
+      text('qrHint', '用手机上的夸克 App 扫上面的码，扫完在手机上点确认。');
+      qrDeadline = Date.now() + 120000;
+      qrTimer = setInterval(qrPoll, 2000);
+    }, 30000);
+  };
+
+
   function qShowRaw(s) {
     var box = el('qRaw');
     if (!s) { box.style.display = 'none'; box.textContent = ''; return; }
@@ -557,24 +697,33 @@
   el('qLogin').onclick = function () {
     var btn = el('qLogin');
     var cookie = el('qCookie').value.trim();
-    if (!cookie) { text('qMsg', '先把 cookie 粘进来'); return; }
+    if (!cookie) { text('qCookieMsg', '先把 cookie 粘进来'); return; }
+    // 服务端也认 cURL 和整块请求头，但连一个等号都没有的文本肯定不是 cookie，
+    // 这种错误当场说清楚，不用等一次网络往返换来一个 401。
+    if (cookie.indexOf('=') < 0) {
+      text('qCookieMsg', '这段里没有 a=b 这样的键值对，粘的不是 cookie');
+      return;
+    }
     btn.disabled = true;
-    text('qMsg', '正在向夸克验证…');
+    text('qCookieMsg', '正在向夸克验证…');
     json('POST', '/api/quark/login', 'cookie=' + encodeURIComponent(cookie), function (err, d) {
       btn.disabled = false;
       if (err) { text('qMsg', '失败：' + err.message); return; }
       if (!d.ok) {
-        text('qStateV', 'cookie 没通过');
-        text('qMsg', d.saved ? 'cookie 已保存，但验证失败' : 'cookie 没保存');
-        qShowRaw((d.error || '') + (d.raw ? '\n\n原始返回：' + d.raw : ''));
+        text('qCookieMsg', d.saved ? 'cookie 已保存，但验证失败' : 'cookie 没通过');
+        qShowRaw((d.error || '') +
+          (d.count ? '\n\n解析到 ' + d.count + ' 个字段：' + d.keys : '') +
+          (d.raw ? '\n\n原始返回：' + d.raw : ''));
         return;
       }
       el('qCookie').value = '';
       qShowRaw('');
+      qrClear();
+      text('qCookieMsg', '登录成功 · 解析到 ' + d.count + ' 个 cookie 字段');
+      text('qrHint', '已登录，下面就是网盘根目录。');
       text('qStateV', (d.nickname || '已登录') +
         (d.total_bytes ? ' · 共 ' + fmtSize(d.total_bytes) +
           '，已用 ' + fmtSize(d.used_bytes) : ''));
-      text('qMsg', '登录成功');
       qPath = [{ fid: '0', name: '根目录' }];
       qSel = {};
       qSetSel();
@@ -583,9 +732,11 @@
   };
 
   el('qLogout').onclick = function () {
+    qrClear();
     json('POST', '/api/quark/logout', '', function () {
       text('qStateV', '未登录');
       text('qMsg', '已退出登录');
+      text('qrHint', '点上面的「扫码登录」，然后用手机上的夸克 App 扫这个码。');
       text('qCrumb', '');
       el('qList').textContent = '';
       qShowRaw('');

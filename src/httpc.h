@@ -30,6 +30,11 @@ typedef struct {
   char tls_subject[128];
   char tls_issuer[128];
   char tls_expires[24];
+  /* Every Set-Cookie of the exchange, folded into one replayable
+   * "name=value; name=value" string, attributes dropped. Login is the only
+   * place this client needs a cookie store: the scan flow hands the session
+   * over in Set-Cookie and nothing else. */
+  char set_cookie[2048];
   char err[220];           /* transport-level failure, "" when none */
 } http_result;
 

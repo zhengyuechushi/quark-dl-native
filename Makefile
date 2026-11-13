@@ -23,7 +23,7 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
-APP_VERSION := 0.3.0
+APP_VERSION := 0.4.0
 BUILD_ID    ?= dev
 PYTHON      ?= python3
 STRIP       ?= $(PS5_PAYLOAD_SDK)/bin/prospero-strip
@@ -41,7 +41,7 @@ TLS_LIBS   := -L$(TLS_PREFIX)/lib -lmbedtls -lmbedx509 -lmbedcrypto
 BIN       := quark-dl.elf
 LINUX_BIN := quark-dl-linux
 SRCS      := src/main.c src/websrv.c src/api.c src/kern.c src/asset.c src/notify.c \
-             src/net.c src/httpc.c src/dl.c src/json.c src/quark.c
+             src/net.c src/httpc.c src/dl.c src/json.c src/cookie.c src/quark.c
 HEADERS   := $(wildcard src/*.h)
 
 # icon0.png is the home-screen tile, served at /favicon.ico but registered by an

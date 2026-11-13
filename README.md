@@ -1,24 +1,41 @@
-# Quark DL — 阶段三：登录、浏览、下载网盘文件
+# Quark DL — 登录、浏览、下载网盘文件
 
 阶段一（能加载、进程名 `quark-dl.elf`、能主动退出）和阶段二（TLS、下载引擎、断点续传、
-队列持久化、网络自检）都已在实机通过。这一版把业务层接上：
+队列持久化、网络自检）都已在实机通过。业务层这一版有两种登录方式：
 
-1. **登录**：粘一份浏览器里的 cookie（不走扫码，理由见下），落到 `cookie.txt`；
-2. **浏览**：面包屑 + 目录列表，字段名与路径来自实测；
-3. **下载**：勾选文件或整个文件夹，批量换直链后交给阶段二的引擎——引擎一行没改。
+1. **扫码登录（默认）**：页面上出一张二维码，手机上的夸克 App 扫一下、点确认，进程自己去换 Cookie；
+2. **粘贴 Cookie（兜底）**：扫不了码时，从电脑浏览器取一次 Cookie 粘进来——四种粘法都认
+   （裸值 / `Cookie:` 整行 / 整块请求头 / `Copy as cURL` 的整段命令）；
+3. **浏览**：面包屑 + 目录列表，字段名与路径来自实测；
+4. **下载**：勾选文件或整个文件夹，批量换直链后交给阶段二的引擎——引擎一行没改。
 
-**扫码登录没做**，是取舍不是遗漏：扫一个码和粘一段 cookie 最终得到的是同一个东西（一串 Cookie），
-所以存储、列表、下载的代码完全相同。先把 cookie 这条路打通，业务层就能立刻被真实数据检验；
-扫码只是换一种取得 cookie 的方式，可以后补而不影响其它部分。
+两种登录最后都落到同一份 `cookie.txt`，所以浏览、下载、续传的代码完全不区分来源。
+
+## 扫码是怎么实现的
+
+四个接口全部从 `pan.quark.cn` 自己的前端 bundle 里读出来，不是猜的，并且逐条对本机实测过：
+
+| 步骤 | 请求 | 实测 |
+|---|---|---|
+| 取一次性 token | `GET uop.quark.cn/cas/ajax/getTokenForQrcodeLogin` | `{"status":2000000,"data":{"members":{"token":"sta…"}}}` |
+| 二维码内容 | `https://su.quark.cn/4_eMHBJ?token=<token>&client_id=532&ssb=weblogin&uc_biz_str=…` | 302（正常跳到落地页） |
+| 轮询（2 秒一次） | `GET uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken?token=<token>` | 没人扫时 `{"status":50004001,"message":"Query result is empty"}` |
+| 票据换会话 | `GET pan.quark.cn/account/info?st=<ticket>&lw=scan` | 会话在 `Set-Cookie` 里，且必须含 `__pus` / `__puus` |
+
+等待码 `50004001 80005000 80005001 80005002`、过期码 `50004002 80005003 80005004`、
+成功码 `2000000`，都取自同一份 bundle。**没见过的状态码当失败处理**，不留在「等待扫码」里干等。
+
+二维码本身由 `assets/qrcode.js`（byte mode / 纠错 M，零依赖）在页面里画到 canvas 上，
+不是去求第三方接口生成图片。这份编码器用 OpenCV 解码反验过：187 字节的真实 URL 能原样解出。
 
 ## 当前构建
 
 | 项 | 值 |
 |---|---|
-| 版本 | 0.3.0 |
-| build id | `1e4fd1f`（ELF 里可 `grep` 到完整 sha，用来确认刷进去的是哪一版） |
-| 大小 | 834 KB（mbedTLS + 200 KB 根证书库 + 业务层） |
-| CI | run `43452634668`，`elf` 与 `linux-smoke` 全绿，含 JSON 解析器单测 |
+| 版本 | 0.4.0 |
+| build id | 见 CI 产物（ELF 里可 `grep` 到完整 sha，用来确认刷进去的是哪一版） |
+| 大小 | 约 850 KB（mbedTLS + 200 KB 根证书库 + 业务层 + 二维码编码器） |
+| CI | `elf` 与 `linux-smoke` 全绿，含 JSON 解析器、Cookie 解析与 Set-Cookie 归并单测 |
 
 阶段一、二在 CI 里长期成立的那几项：https 用自签 CA 通过、换一个未知 CA 被拒**并报出被拒的那张证书**、
 300 KB 逐字节一致、预置 `.part` 产生 `Range: bytes=120000-` 并续传成功、chunked 无 `Content-Length`、

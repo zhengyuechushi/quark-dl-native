@@ -1,5 +1,6 @@
 #include "quark.h"
 
+#include "cookie.h"
 #include "httpc.h"
 #include "json.h"
 
@@ -7,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Where the web client itself talks. Read from pan.quark.cn's front-end bundle
@@ -226,56 +228,36 @@ quark_logout(void) {
   unlink(path);
 }
 
+/* ---------------------------------------------------------- cookie import */
+
+/* The paste parser itself lives in cookie.c, because it is the one piece of this
+ * file that can be tested without a console, a network or an account. What is
+ * left here is turning its answer into a session. */
+
 int
 quark_set_cookie(const char *raw, quark_session *s, char *err, size_t cap) {
-  const char *p = raw;
   char clean[QUARK_COOKIE_MAX];
-  size_t o = 0;
-  int eq = 0;
+  int n;
 
   if(!raw) {
     snprintf(err, cap, "内容为空");
     return -1;
   }
-  while(*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
-    p++;
-  }
-  /* People paste either the value or the whole header line, because the
-   * developer tools present it as "Cookie: ..." and that is what gets
-   * selected. Both are accepted. */
-  if((p[0] == 'c' || p[0] == 'C') && (p[1] == 'o' || p[1] == 'O') &&
-     (p[2] == 'o' || p[2] == 'O') && (p[3] == 'k' || p[3] == 'K') &&
-     (p[4] == 'i' || p[4] == 'I') && (p[5] == 'e' || p[5] == 'E') &&
-     p[6] == ':') {
-    p += 7;
-    while(*p == ' ' || *p == '\t') {
-      p++;
-    }
-  }
-  for(; *p && o + 1 < sizeof(clean); p++) {
-    /* A multi-line paste (a copied request header block) is folded to one
-     * header value: a bare newline inside a header would split the request and
-     * the server would see a truncated cookie with no explanation. */
-    if(*p == '\r' || *p == '\n' || *p == '\t') {
-      if(o && clean[o - 1] != ' ') {
-        clean[o++] = ' ';
-      }
-      continue;
-    }
-    if(*p == '=') {
-      eq = 1;
-    }
-    clean[o++] = *p;
-  }
-  while(o && (clean[o - 1] == ' ' || clean[o - 1] == ';')) {
-    o--;
-  }
-  clean[o] = 0;
-  if(!eq || o < 16) {
+  n = cookie_extract(raw, clean, sizeof(clean));
+  if(n == 0) {
+    /* Two different failures, two different fixes, so they say different
+     * things. Zero found means the text had no cookie in it at all, which in
+     * practice means the request being inspected never carried one — the
+     * developer tools say "Provisional headers are shown" when that happens. */
     snprintf(err, cap,
-             "这段内容不像 cookie（长度 %lu，没有等号就是没粘对）。"
-             "要的是浏览器开发者工具里 Cookie 那一行的值。",
-             (unsigned long)o);
+             "这段内容里没有 cookie。它应该长这样：__pus=xxx; __puus=yyy; "
+             "__kp=zzz。若开发者工具显示「Provisional headers are shown」，"
+             "说明那条请求没真正发出（或来自缓存），换一条状态 200 的再复制。");
+    return -1;
+  }
+  if(n < 8) {
+    snprintf(err, cap, "cookie 太短了（%d 字节），应该是完整的一串 a=b; c=d",
+             n);
     return -1;
   }
   memset(s, 0, sizeof(*s));
@@ -283,6 +265,295 @@ quark_set_cookie(const char *raw, quark_session *s, char *err, size_t cap) {
   s->valid = 1;
   s->verified = 0;
   return 0;
+}
+
+int
+quark_cookie_keys(const char *cookie, char *out, size_t cap, int *count) {
+  const char *p = cookie;
+  size_t o = 0;
+  int n = 0;
+
+  if(out && cap) out[0] = 0;
+  if(count) *count = 0;
+  if(!cookie) return 0;
+
+  while(*p) {
+    const char *name = p;
+    size_t len;
+
+    while(*p && *p != '=' && *p != ';') p++;
+    len = (size_t)(p - name);
+    while(len && (*name == ' ' || *name == '\t')) {
+      name++;
+      len--;
+    }
+    if(len) {
+      n++;
+      /* Names only, no values: this is meant to be shown on screen and a cookie
+       * value is a credential. */
+      if(out && o + len + 2 < cap) {
+        if(o) out[o++] = ',';
+        memcpy(out + o, name, len);
+        o += len;
+        out[o] = 0;
+      }
+    }
+    while(*p && *p != ';') p++;
+    if(*p == ';') p++;
+  }
+  if(count) *count = n;
+  return n;
+}
+
+/* ------------------------------------------------------------- scan login */
+
+/* Four requests, taken from pan.quark.cn's own front-end bundle and confirmed
+ * against the live service (the poll endpoint answers {"status":50004001,
+ * "message":"Query result is empty"} for a token nobody has scanned yet):
+ *
+ *   1. GET  uop.quark.cn/cas/ajax/getTokenForQrcodeLogin
+ *            -> data.members.token
+ *   2. the QR image content is a URL on su.quark.cn carrying that token
+ *   3. GET  uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken?token=..
+ *            -> 2000000 + data.members.service_ticket once the phone confirms
+ *   4. GET  pan.quark.cn/account/info?st=<ticket>&lw=scan
+ *            -> the session arrives in Set-Cookie, nothing else
+ *
+ * Step 4 is why httpc grew a cookie jar. There is no JSON body worth reading
+ * there, and no other endpoint in this program ever needs Set-Cookie. */
+
+/* One request to an arbitrary host, with or without a session. Every listing
+ * call goes through call(), which is pinned to the API host and refuses to run
+ * without a cookie - both of which the login flow predates. `out` may be NULL
+ * when the answer's body is not wanted. */
+static int
+fetch(const char *url, const char *cookie, const char *accept, char **out,
+      http_result *meta, char *err, size_t errcap) {
+  http_req req;
+  body_buf buf;
+  char *hdr = NULL;
+  int rc;
+
+  memset(&req, 0, sizeof(req));
+  memset(&buf, 0, sizeof(buf));
+  memset(meta, 0, sizeof(*meta));
+  if(out) {
+    *out = NULL;
+  }
+
+  if(cookie && *cookie) {
+    /* Heap, not stack: the header is a few kilobytes of credential and this
+     * runs on an HTTP worker thread whose stack is not ours to gamble with. */
+    size_t need = strlen(cookie) + 200;
+
+    hdr = (char *)malloc(need);
+    if(!hdr) {
+      snprintf(err, errcap, "内存不足");
+      return -1;
+    }
+    snprintf(hdr, need,
+             "Cookie: %s\r\nAccept: %s\r\nOrigin: " QUARK_ORIGIN
+             "\r\nReferer: " QUARK_ORIGIN "/\r\n"
+             "Accept-Language: zh-CN,zh;q=0.9\r\n",
+             cookie, accept ? accept : "application/json, text/plain, */*");
+    req.extra_headers = hdr;
+  } else if(accept) {
+    size_t need = strlen(accept) + 160;
+
+    hdr = (char *)malloc(need);
+    if(!hdr) {
+      snprintf(err, errcap, "内存不足");
+      return -1;
+    }
+    snprintf(hdr, need, "Accept: %s\r\nReferer: " QUARK_ORIGIN "/\r\n", accept);
+    req.extra_headers = hdr;
+  }
+
+  req.url = url;
+  req.user_agent = QUARK_UA;
+  req.timeout_ms = 20000;
+  if(out) {
+    req.write = body_write;
+    req.write_ctx = &buf;
+  }
+
+  rc = http_perform(&req, meta);
+  free(hdr);
+  if(rc != 0) {
+    snprintf(err, errcap, "%s", meta->err[0] ? meta->err : "请求失败");
+    free(buf.p);
+    return -1;
+  }
+  if(meta->status != 200) {
+    snprintf(err, errcap, "HTTP %d（%s）", meta->status, url);
+    free(buf.p);
+    return -1;
+  }
+  if(out) {
+    if(!buf.p) {
+      snprintf(err, errcap, "服务器返回了空内容");
+      return -1;
+    }
+    *out = buf.p;
+  } else {
+    free(buf.p);
+  }
+  return 0;
+}
+
+int
+quark_qr_new(char *url, size_t urlcap, char *token, size_t tokcap, char *err,
+             size_t errcap) {
+  char full[600];
+  char rid[64];
+  char jerr[120];
+  char *body = NULL;
+  http_result meta;
+  json_value *v;
+  const char *t;
+  long long code;
+
+  snprintf(rid, sizeof(rid), "%lx%04lx", (unsigned long)time(NULL),
+           (unsigned long)(getpid() & 0xffff));
+  snprintf(full, sizeof(full),
+           "https://uop.quark.cn/cas/ajax/getTokenForQrcodeLogin"
+           "?client_id=" QUARK_CLIENT_ID "&v=1.2&request_id=%s",
+           rid);
+
+  if(fetch(full, NULL, "application/json, text/plain, */*", &body, &meta, err,
+           errcap)) {
+    return -1;
+  }
+  v = json_parse(body, jerr, sizeof(jerr));
+  free(body);
+  if(!v) {
+    snprintf(err, errcap, "取扫码 token 的返回不是 JSON：%s", jerr);
+    return -1;
+  }
+  code = json_int(json_get(v, "status"), -1);
+  t = json_str(json_path(v, "data.members.token"), NULL);
+  if(code != 2000000 || !t || !*t) {
+    snprintf(err, errcap, "取扫码 token 失败（status=%lld %.60s）", code,
+             json_str(json_get(v, "message"), ""));
+    json_free(v);
+    return -1;
+  }
+  snprintf(token, tokcap, "%s", t);
+  json_free(v);
+
+  /* The token is alphanumeric, so it goes into the query without escaping.
+   * Everything after ssb is what the official page sends; the app reads it to
+   * pick the scan-login layout, and leaving it out changes the landing page. */
+  snprintf(url, urlcap,
+           "https://su.quark.cn/4_eMHBJ?token=%s&client_id=" QUARK_CLIENT_ID
+           "&ssb=weblogin&uc_param_str=&uc_biz_str=S:custom|OPT:SAREA@0|OPT:"
+           "IMMERSIVE@1|OPT:BACK_BTN_STYLE@0",
+           token);
+  return 0;
+}
+
+/* Step 4: the ticket is worth a session only once, immediately, so it is
+ * exchanged here rather than handed back to the page. */
+static int
+qr_exchange(const char *ticket, quark_session *s, char *err, size_t errcap) {
+  char url[900];
+  http_result meta;
+
+  snprintf(url, sizeof(url), QUARK_ORIGIN "/account/info?st=%s&lw=scan",
+           ticket);
+  if(fetch(url, NULL, "text/html,application/json,*/*", NULL, &meta, err,
+           errcap)) {
+    return -1;
+  }
+  if(!meta.set_cookie[0]) {
+    snprintf(err, errcap, "登录响应里没有 Set-Cookie，扫码未生效");
+    return -1;
+  }
+  /* Without these two the service answers every later call with 401, and the
+   * page would show "登录成功" followed by an empty drive. */
+  if(!strstr(meta.set_cookie, "__pus") && !strstr(meta.set_cookie, "__puus")) {
+    snprintf(err, errcap,
+             "登录响应缺 __pus/__puus（拿到 %.120s），扫码未生效", meta.set_cookie);
+    return -1;
+  }
+  memset(s, 0, sizeof(*s));
+  snprintf(s->cookie, sizeof(s->cookie), "%s", meta.set_cookie);
+  s->valid = 1;
+  /* The service has just confirmed who this is; asking again would be a second
+   * round trip for information the caller already has. */
+  s->verified = 1;
+  if(quark_save(s)) {
+    snprintf(err, errcap, "会话已拿到但写入 cookie.txt 失败");
+    return -1;
+  }
+  return 0;
+}
+
+int
+quark_qr_poll(const char *token, quark_session *s, char *err, size_t errcap) {
+  char url[700];
+  char rid[64];
+  char jerr[120];
+  char ticket[600];
+  char *body = NULL;
+  http_result meta;
+  json_value *v;
+  const char *t;
+  long long code;
+
+  if(!token || !*token) {
+    snprintf(err, errcap, "没有扫码 token");
+    return -1;
+  }
+  snprintf(rid, sizeof(rid), "%lx%04lx", (unsigned long)time(NULL),
+           (unsigned long)(getpid() & 0xffff));
+  snprintf(url, sizeof(url),
+           "https://uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken"
+           "?client_id=" QUARK_CLIENT_ID "&v=1.2&token=%s&request_id=%s",
+           token, rid);
+
+  if(fetch(url, NULL, "application/json, text/plain, */*", &body, &meta, err,
+           errcap)) {
+    return -1;
+  }
+  v = json_parse(body, jerr, sizeof(jerr));
+  free(body);
+  if(!v) {
+    snprintf(err, errcap, "扫码状态的返回不是 JSON：%s", jerr);
+    return -1;
+  }
+  code = json_int(json_get(v, "status"), -1);
+  t = json_str(json_path(v, "data.members.service_ticket"), NULL);
+  if(code == 2000000 && t && *t) {
+    snprintf(ticket, sizeof(ticket), "%s", t);
+    json_free(v);
+    if(qr_exchange(ticket, s, err, errcap)) {
+      return -1;
+    }
+    return QUARK_QR_OK;
+  }
+  json_free(v);
+
+  /* The waiting codes are the ones the live service actually returns: 50004001
+   * before anyone scans. The 8000500x family comes from the same client code
+   * and covers "scanned, not confirmed yet". A code that is not in either list
+   * is reported rather than guessed at, because silently polling forever is how
+   * a login page ends up stuck at "等待扫码". */
+  switch(code) {
+    case 2000000:
+    case 50004001:
+    case 80005000:
+    case 80005001:
+    case 80005002:
+      return QUARK_QR_WAITING;
+    case 50004002:
+    case 80005003:
+    case 80005004:
+      return QUARK_QR_EXPIRED;
+    default:
+      snprintf(err, errcap, "扫码状态未知（status=%lld）", code);
+      return -1;
+  }
 }
 
 /* -------------------------------------------------------------- transport */

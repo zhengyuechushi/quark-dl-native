@@ -947,6 +947,73 @@ path_arg(struct MHD_Connection *conn, const char *name) {
 }
 
 static enum MHD_Result
+api_quark_qr(struct MHD_Connection *conn) {
+  const char *act = path_arg(conn, "act");
+  char eurl[900];
+  char eerr[700];
+  char enick[260];
+  char json[1600];
+  quark_session s;
+
+  if(!act || !strcmp(act, "start")) {
+    char url[600];
+    char token[160];
+    char err[400];
+
+    if(quark_qr_new(url, sizeof(url), token, sizeof(token), err, sizeof(err))) {
+      json_escape(eerr, sizeof(eerr), err);
+      snprintf(json, sizeof(json), "{\"ok\":false,\"error\":\"%s\"}", eerr);
+      return send_json(conn, MHD_HTTP_OK, json);
+    }
+    json_escape(eurl, sizeof(eurl), url);
+    snprintf(json, sizeof(json), "{\"ok\":true,\"token\":\"%s\",\"url\":\"%s\"}",
+             token, eurl);
+    return send_json(conn, MHD_HTTP_OK, json);
+  }
+
+  if(!strcmp(act, "poll")) {
+    const char *token = path_arg(conn, "token");
+    char err[400];
+    int rc;
+
+    if(!token) {
+      return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                       "{\"ok\":false,\"error\":\"缺少 token\"}");
+    }
+    memset(&s, 0, sizeof(s));
+    rc = quark_qr_poll(token, &s, err, sizeof(err));
+    if(rc < 0) {
+      json_escape(eerr, sizeof(eerr), err);
+      snprintf(json, sizeof(json), "{\"ok\":false,\"error\":\"%s\"}", eerr);
+      return send_json(conn, MHD_HTTP_OK, json);
+    }
+    if(rc == QUARK_QR_WAITING) {
+      return send_json(conn, MHD_HTTP_OK,
+                       "{\"ok\":true,\"state\":\"waiting\"}");
+    }
+    if(rc == QUARK_QR_EXPIRED) {
+      return send_json(conn, MHD_HTTP_OK,
+                       "{\"ok\":true,\"state\":\"expired\"}");
+    }
+    /* The session is already on disk. The nickname is a nicety: if the call
+     * fails the console is still logged in, so it must not turn into an error. */
+    quark_load(&s);
+    if(quark_whoami(&s, err, sizeof(err)) == 0) {
+      quark_save(&s);
+    }
+    json_escape(enick, sizeof(enick), s.nickname);
+    snprintf(json, sizeof(json),
+             "{\"ok\":true,\"state\":\"ok\",\"nickname\":\"%s\","
+             "\"total_bytes\":%lld,\"used_bytes\":%lld}",
+             enick, s.total_bytes, s.used_bytes);
+    return send_json(conn, MHD_HTTP_OK, json);
+  }
+
+  return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                   "{\"ok\":false,\"error\":\"act 只认 start 和 poll\"}");
+}
+
+static enum MHD_Result
 api_quark_status(struct MHD_Connection *conn) {
   quark_session s;
   char enick[260];
@@ -969,12 +1036,17 @@ api_quark_status(struct MHD_Connection *conn) {
  * wondering which of the two things is broken. */
 static enum MHD_Result
 api_quark_login(struct MHD_Connection *conn, const char *body, size_t size) {
-  char raw[QUARK_COOKIE_MAX + 64];
+  /* Far larger than the cookie itself: a "Copy as cURL" paste carries every
+   * header of the request, and truncating it would cut the cookie in half. */
+  char raw[16 * 1024];
   char err[600];
   char eerr[700];
   char enick[260];
-  char json[1600];
+  char keys[400];
+  char ekeys[500];
+  char json[2400];
   quark_session s;
+  int nkeys = 0;
   int saved;
 
   if(!form_field(body, size, "cookie", raw, sizeof(raw))) {
@@ -986,7 +1058,34 @@ api_quark_login(struct MHD_Connection *conn, const char *body, size_t size) {
     snprintf(json, sizeof(json), "{\"ok\":false,\"error\":\"%s\"}", eerr);
     return send_json(conn, MHD_HTTP_OK, json);
   }
+  /* Names of what was actually parsed. The page shows them, because "0 fields"
+   * is the fastest way to see that a paste landed empty. */
+  quark_cookie_keys(s.cookie, keys, sizeof(keys), &nkeys);
+  json_escape(ekeys, sizeof(ekeys), keys);
+
   if(quark_whoami(&s, err, sizeof(err))) {
+    /* The cookie is kept anyway. It may be the network that is down, and
+     * throwing away a probably-good cookie because the console could not reach
+     * the service would make the user paste it again for nothing. */
+    char eraw[700];
+
+    saved = quark_save(&s);
+    json_escape(eerr, sizeof(eerr), err);
+    json_escape(eraw, sizeof(eraw), quark_last_raw());
+    snprintf(json, sizeof(json),
+             "{\"ok\":false,\"saved\":%s,\"error\":\"%s\",\"raw\":\"%s\","
+             "\"count\":%d,\"keys\":\"%s\"}",
+             saved == 0 ? "true" : "false", eerr, eraw, nkeys, ekeys);
+    return send_json(conn, MHD_HTTP_OK, json);
+  }
+  quark_save(&s);
+  json_escape(enick, sizeof(enick), s.nickname);
+  snprintf(json, sizeof(json),
+           "{\"ok\":true,\"nickname\":\"%s\",\"total_bytes\":%lld,"
+           "\"used_bytes\":%lld,\"count\":%d,\"keys\":\"%s\"}",
+           enick, s.total_bytes, s.used_bytes, nkeys, ekeys);
+  return send_json(conn, MHD_HTTP_OK, json);
+}
     /* The cookie is kept anyway. It may be the network that is down, and
      * throwing away a probably-good cookie because the console could not reach
      * the service would make the user paste it again for nothing. */
@@ -1419,6 +1518,9 @@ api_request(struct MHD_Connection *conn, const char *url, const char *method,
   if(!strcmp(path, "/api/quark/login")) {
     return is_post ? api_quark_login(conn, body, size)
                    : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/quark/qr")) {
+    return is_get ? api_quark_qr(conn) : api_not_found(conn, path);
   }
   if(!strcmp(path, "/api/quark/logout")) {
     return api_quark_logout(conn, method);
