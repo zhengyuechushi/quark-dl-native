@@ -1,4 +1,4 @@
-name: build-elf
+name: build
 
 on:
   workflow_dispatch:
@@ -34,3 +34,60 @@ jobs:
           name: quark-dl-elf
           path: quark-dl.elf
           if-no-files-found: error
+
+  # The console-specific parts (SYS_thr_set_name, sysctl, notifications) cannot be
+  # tested off-hardware. Everything else — routing, JSON, static assets, and the
+  # /api/exit path that ends main — runs identically on the host build, so it gets
+  # tested here instead of being discovered on the console.
+  linux-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host libmicrohttpd
+        run: sudo apt-get update && sudo apt-get install -y libmicrohttpd-dev
+
+      - name: Build host binary
+        run: make linux BUILD_ID=smoke
+
+      - name: Endpoints and clean exit
+        run: |
+          set -e
+          ./quark-dl-linux > server.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8888/api/health > /dev/null 2>&1; then break; fi
+            sleep 0.5
+          done
+
+          echo "--- health ---"
+          curl -fsS http://127.0.0.1:8888/api/health | tee health.json
+          echo
+          echo "--- diag ---"
+          curl -fsS http://127.0.0.1:8888/api/diag | tee diag.json
+          echo
+          echo "--- index ---"
+          curl -fsS http://127.0.0.1:8888/ | head -c 120
+          echo
+
+          grep -q '"ok":true' health.json
+          grep -q '"build":"smoke"' health.json
+          grep -q '"expected":"quark-dl.elf"' diag.json
+          grep -q '"port":8888' diag.json
+
+          echo "--- exit ---"
+          curl -fsS -X POST http://127.0.0.1:8888/api/exit
+          echo
+
+          for i in $(seq 1 20); do
+            if ! kill -0 "$PID" 2>/dev/null; then echo "process exited"; exit 0; fi
+            sleep 0.5
+          done
+          echo "process did not exit after /api/exit"
+          cat server.log
+          exit 1
+
+      - name: Log on failure
+        if: failure()
+        run: cat server.log || true

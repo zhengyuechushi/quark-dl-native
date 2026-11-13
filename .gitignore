@@ -1,4 +1,6 @@
 quark-dl.elf
+quark-dl-linux
 gen/
 .build-*
 *.o
+server.log

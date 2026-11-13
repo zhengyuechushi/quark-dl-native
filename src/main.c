@@ -138,8 +138,13 @@ main(int argc, char **argv) {
   syscall(SYS_thr_set_name, -1, PROCESS_NAME);
 
   /* One instance per console. A stale copy that moved to 8889 would otherwise
-   * keep serving an older build on the same data directory. */
-  while((pid = find_pid(PROCESS_NAME)) > 0) {
+   * keep serving an older build on the same data directory. Bounded on purpose:
+   * if the kernel will not let the old one go, serving is more useful than
+   * spinning here forever with no port open. */
+  for(int tries = 0; tries < 5; tries++) {
+    if((pid = find_pid(PROCESS_NAME)) <= 0) {
+      break;
+    }
     if(kill(pid, SIGKILL)) {
       perror("kill");
       break;

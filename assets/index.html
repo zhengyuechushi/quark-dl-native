@@ -125,29 +125,51 @@
     text('statusText', '连接中断：' + (err && err.message ? err.message : '未知错误'));
   }
 
+  /* XMLHttpRequest rather than fetch: the console's browser is old enough that
+   * fetch is not worth betting the whole page on. */
+  function request(method, url, cb) {
+    var xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    xhr.timeout = 6000;
+    xhr.onload = function () {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        cb(null, xhr.responseText);
+      } else {
+        cb(new Error('HTTP ' + xhr.status));
+      }
+    };
+    xhr.onerror = function () { cb(new Error('网络错误')); };
+    xhr.ontimeout = function () { cb(new Error('超时')); };
+    xhr.send(null);
+  }
+
   function poll() {
     if (busy) return;
-    fetch('/api/diag', { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
-      .then(render)
-      .catch(fail);
+    busy = true;
+    request('GET', '/api/diag', function (err, text) {
+      busy = false;
+      if (err) { fail(err); return; }
+      var data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        fail(new Error('返回内容不是 JSON'));
+        return;
+      }
+      render(data);
+    });
   }
 
   el('exit').onclick = function () {
     var btn = el('exit');
     btn.disabled = true;
     btn.textContent = '正在退出…';
-    fetch('/api/exit', { method: 'POST' })
-      .then(function () {
-        el('dot').className = 'dot off';
-        text('statusText', '已退出。重新加载 ELF 即可再次启动。');
-        btn.textContent = '已结束';
-      })
-      .catch(function () {
-        el('dot').className = 'dot off';
-        text('statusText', '已退出（连接被断开属正常）。');
-        btn.textContent = '已结束';
-      });
+    busy = true;
+    request('POST', '/api/exit', function () {
+      el('dot').className = 'dot off';
+      text('statusText', '已退出。重新加载 ELF 即可再次启动。');
+      btn.textContent = '已结束';
+    });
   };
 
   poll();

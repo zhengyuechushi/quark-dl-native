@@ -103,7 +103,6 @@ api_diag(struct MHD_Connection *conn) {
   char body[2048];
   int named;
   int instances;
-  int allow_default;
 
   named = qdl_kernel_name(kernel_name, sizeof(kernel_name)) == 0;
   if(!named) {
@@ -111,22 +110,20 @@ api_diag(struct MHD_Connection *conn) {
   }
   json_escape(safe_name, sizeof(safe_name), kernel_name);
   instances = qdl_count_named(PROCESS_NAME);
-  allow_default = 0;
 
   snprintf(body, sizeof(body),
            "{\"app\":\"%s\",\"version\":\"%s\",\"build\":\"%s\","
            "\"pid\":%d,\"ppid\":%d,\"port\":%u,\"uptime_ms\":%ld,"
            "\"name\":{\"expected\":\"%s\",\"kernel\":\"%s\",\"readable\":%s,"
            "\"ok\":%s,\"instances\":%d},"
-           "\"exiting\":%s,\"autostart\":%s}",
+           "\"exiting\":%s}",
            APP_NAME, APP_VERSION, BUILD_ID,
            qdl_self_pid(), qdl_parent_pid(), (unsigned)g_port, elapsed_ms(),
            PROCESS_NAME, safe_name,
            named ? "true" : "false",
            (named && !strcmp(kernel_name, PROCESS_NAME)) ? "true" : "false",
            instances,
-           g_exiting ? "true" : "false",
-           allow_default ? "true" : "false");
+           g_exiting ? "true" : "false");
   return send_json(conn, MHD_HTTP_OK, body);
 }
 
