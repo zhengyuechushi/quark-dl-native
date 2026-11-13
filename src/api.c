@@ -990,11 +990,14 @@ api_quark_login(struct MHD_Connection *conn, const char *body, size_t size) {
     /* The cookie is kept anyway. It may be the network that is down, and
      * throwing away a probably-good cookie because the console could not reach
      * the service would make the user paste it again for nothing. */
+    char eraw[700];
+
     saved = quark_save(&s);
     json_escape(eerr, sizeof(eerr), err);
+    json_escape(eraw, sizeof(eraw), quark_last_raw());
     snprintf(json, sizeof(json),
-             "{\"ok\":false,\"saved\":%s,\"error\":\"%s\",\"raw\":\"%.400s\"}",
-             saved == 0 ? "true" : "false", eerr, quark_last_raw());
+             "{\"ok\":false,\"saved\":%s,\"error\":\"%s\",\"raw\":\"%s\"}",
+             saved == 0 ? "true" : "false", eerr, eraw);
     return send_json(conn, MHD_HTTP_OK, json);
   }
   quark_save(&s);
@@ -1051,11 +1054,15 @@ api_quark_list(struct MHD_Connection *conn) {
                  sizeof(err));
   if(n < 0) {
     enum MHD_Result rc;
+    char eraw[900];
 
     json_escape(eerr, sizeof(eerr), err);
+    /* The raw head of the response is a JSON document full of quotes, so it has
+     * to be escaped before it becomes a string inside another JSON document. */
+    json_escape(eraw, sizeof(eraw), quark_last_raw());
     snprintf(out, cap,
-             "{\"ok\":false,\"need_login\":%s,\"error\":\"%s\",\"raw\":\"%.400s\"}",
-             strstr(err, "登录") ? "true" : "false", eerr, quark_last_raw());
+             "{\"ok\":false,\"need_login\":%s,\"error\":\"%s\",\"raw\":\"%s\"}",
+             strstr(err, "登录") ? "true" : "false", eerr, eraw);
     free(entries);
     rc = send_json(conn, MHD_HTTP_OK, out);
     free(out);
@@ -1325,8 +1332,19 @@ api_quark_probe(struct MHD_Connection *conn) {
     return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                      "{\"ok\":false,\"error\":\"内存不足\"}");
   }
-  quark_probe(&s, path ? path : "/1/clouddrive/member?" QUARK_COMMON, out,
-              320u * 1024u, err, sizeof(err));
+  if(quark_probe(&s, path ? path : "/1/clouddrive/member?" QUARK_COMMON, out,
+                 320u * 1024u, err, sizeof(err))) {
+    /* The failure is wrapped here, not in quark.c, because this is where the
+     * escaper lives - and an API error message routinely contains the quotes
+     * and braces of the very response being debugged. */
+    char eerr[700];
+    char eraw[520];
+
+    json_escape(eerr, sizeof(eerr), err);
+    json_escape(eraw, sizeof(eraw), quark_last_raw());
+    snprintf(out, 320u * 1024u,
+             "{\"ok\":false,\"error\":\"%s\",\"raw\":\"%s\"}", eerr, eraw);
+  }
   {
     enum MHD_Result rc = send_json(conn, MHD_HTTP_OK, out);
 

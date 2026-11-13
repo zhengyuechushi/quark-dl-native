@@ -332,6 +332,10 @@ call(const quark_session *s, const char *method, const char *path,
   req.body = body;
   req.body_len = body ? strlen(body) : 0;
   req.timeout_ms = 20000;
+  /* Without these two the response body goes nowhere and every call reports an
+   * empty answer - which reads exactly like an account with no files. */
+  req.write = body_write;
+  req.write_ctx = &buf;
   memset(&res, 0, sizeof(res));
   memset(&buf, 0, sizeof(buf));
 
@@ -416,10 +420,10 @@ quark_probe(const quark_session *s, const char *path, char *out, size_t cap,
     return -1;
   }
   if(call(s, "GET", path, NULL, &body, err, errcap)) {
-    /* Even a failure is worth showing raw: that is how a wrong path or an
-     * expired session gets identified without another round trip. */
-    snprintf(out, cap, "{\"ok\":false,\"error\":\"%s\",\"raw\":\"%.400s\"}",
-             err, g_raw);
+    /* Nothing is written to out on failure: the caller has to escape the error
+     * and the raw body before putting them in a JSON string, and doing it here
+     * would mean a second escaper in this file. A response body full of quotes
+     * is exactly what this is here to show, so it must not be pasted in raw. */
     return -1;
   }
   snprintf(out, cap, "%.*s", (int)(cap - 1), body);
