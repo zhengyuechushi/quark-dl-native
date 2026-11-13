@@ -180,6 +180,24 @@ jobs:
           grep -q "1024 \* 1024" src/net.c
           echo ok
 
+      # A Quark CDN throttles a single connection, so a big file crawled at
+      # ~100 KB/s while the working exFAT build saturated the link by fetching
+      # 32 MiB ranges over 8 parallel connections. The segmented path must stay:
+      # the range size, the connection cap, the probe that learns the size, the
+      # per-range worker, and the pwrite to each range's offset.
+      - name: Big files download over parallel ranges
+        run: |
+          set -e
+          grep -q "SEG_BYTES" src/dl.h
+          grep -q "SEG_CONNS" src/dl.h
+          grep -q "SEG_MIN_BYTES" src/dl.h
+          grep -q "dl_segmented" src/dl.c
+          grep -q "dl_probe_total" src/dl.c
+          grep -q "range_end" src/httpc.h
+          grep -q "pwrite(r->fd, p, len" src/dl.c
+          grep -q "Range: bytes=%lld-%lld" src/httpc.c
+          echo ok
+
       # The page ships inside the ELF, so what it does is invisible until it is
       # on a console - and "I picked a file, pressed the button, nothing
       # happened" is exactly the report that blind spot produces. This runs the

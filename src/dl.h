@@ -34,6 +34,15 @@
  * wants, so the default is 2 and the user can pick. */
 #define DL_DEFAULT_LIMIT 2
 
+/* Multi-connection segmented download. A Quark CDN throttles a single
+ * connection, so one big file crawled at ~100 KB/s while the working exFAT
+ * build, which fetches 32 MiB ranges over 8 parallel connections, saturates
+ * the link. A file this size or larger is split into SEG_BYTES ranges fetched
+ * SEG_CONNS at a time; anything smaller stays on the single-connection path. */
+#define SEG_BYTES (32LL * 1024 * 1024)  /* bytes per range */
+#define SEG_CONNS 8                     /* parallel connections per file */
+#define SEG_MIN_BYTES (2 * SEG_BYTES)   /* split only above this */
+
 /* Loads the persisted queue and settings, creating the data directory. */
 int dl_init(const char *data_dir);
 

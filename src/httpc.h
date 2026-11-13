@@ -58,6 +58,11 @@ typedef struct {
   const char *extra_headers; /* raw "Name: value\r\n" lines, may be NULL */
   const char *user_agent;  /* NULL means "<APP_NAME>/<APP_VERSION>" */
   long long range_from;    /* >0 sends Range: bytes=N- */
+  long long range_end;     /* >0 closes the range: bytes=range_from-range_end.
+                            * A single-file download is split into fixed-size
+                            * ranges and fetched over several connections; an
+                            * open-ended range cannot bound a split, so both
+                            * ends are explicit. 0 keeps the old open range. */
   http_write_cb write;     /* NULL discards the body */
   void *write_ctx;
   volatile int *abort;     /* polled between reads */

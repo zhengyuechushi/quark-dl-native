@@ -527,9 +527,399 @@ sink_write(void *ctx, const void *data, size_t len) {
     }
     p += n;
     len -= (size_t)n;
-    s->t->done += (long long)n;
+    __atomic_fetch_add(&s->t->done, (long long)n, __ATOMIC_RELAXED);
   }
   return 0;
+}
+
+/* --------------------------------------------------- segmented (multi-conn)
+ *
+ * A single connection is throttled by the CDN, so a big file is split into
+ * fixed-size ranges and each range is fetched over its own connection, several
+ * at a time, written to its offset with pwrite. This is the shape the working
+ * exFAT build's native downloader uses (32 MiB ranges, 8 connections) and the
+ * only thing that makes a multi-gigabyte file hit full speed on the console.
+ *
+ * A range is retried on its own: one slow or refused range must not tear down
+ * the seven that are healthy. The whole file is pre-sized with ftruncate so the
+ * holes that a yet-unwritten range leaves are bounded and the final size is
+ * right; on a filesystem without sparse support that allocation is done once,
+ * not per range. */
+
+typedef struct seg_pool seg_pool;
+
+typedef struct {
+  dl_task *t;          /* owning task, for done/cancel and the shared .part fd */
+  int fd;              /* shared, open .part descriptor (pwrite is atomic-ish) */
+  long long begin;     /* inclusive first byte of this range */
+  long long end;       /* inclusive last byte of this range */
+  long long offset;    /* next write offset within the range (== bytes written) */
+  http_result res;     /* this range's response */
+  int errbody_len;
+  char errbody[220];
+  char url[QUARK_URL_MAX];
+  char hdrs[QUARK_COOKIE_MAX + 96];
+  int isq;
+  seg_pool *pool;      /* shared coordinator, for the in-flight counter */
+} seg_range;
+
+/* Sink for one range: pwrite at begin+offset. A non-success body is not file
+ * content, so it is discarded (and a sliver kept for the error message), the
+ * same rule the single-connection sink follows. */
+static int
+seg_write(void *ctx, const void *data, size_t len) {
+  seg_range *r = (seg_range *)ctx;
+  const char *p = (const char *)data;
+
+  if(r->res.status >= 300) {
+    size_t room = sizeof(r->errbody) - 1 - (size_t)r->errbody_len;
+
+    if(room > 0) {
+      size_t n = len < room ? len : room;
+
+      memcpy(r->errbody + r->errbody_len, data, n);
+      r->errbody_len += (int)n;
+      r->errbody[r->errbody_len] = 0;
+    }
+    return 0;
+  }
+  /* 200 means the server ignored Range and sent the whole file: writing it at
+   * this range's offset would corrupt every other range's bytes. Refuse it and
+   * let seg_fetch turn the status into a permanent failure. */
+  if(r->res.status == 200) {
+    return -1;
+  }
+  while(len) {
+    ssize_t n = pwrite(r->fd, p, len, (off_t)(r->begin + r->offset));
+
+    if(n < 0) {
+      if(errno == EINTR) {
+        continue;
+      }
+      return -1;
+    }
+    p += n;
+    len -= (size_t)n;
+    r->offset += (long long)n;
+    /* Several ranges write at once, so the shared byte counter is updated
+     * atomically; a plain += would race the other range threads and the API
+     * thread that samples it for the speed readout. */
+    __atomic_fetch_add(&r->t->done, (long long)n, __ATOMIC_RELAXED);
+  }
+  return 0;
+}
+
+/* Downloads one range to completion. Returns 0 on success, -1 to retry, -2
+ * cancelled, -3 permanent. The retry loop lives in the caller so a retry can
+ * re-open a fresh connection and a fresh signed URL. */
+static int
+seg_fetch(seg_range *r) {
+  http_req req;
+  http_result *res = &r->res;
+
+  memset(res, 0, sizeof(*res));
+  memset(&req, 0, sizeof(req));
+  req.url = r->url;
+  req.range_from = r->begin + r->offset;
+  req.range_end = r->end;
+  req.write = seg_write;
+  req.write_ctx = r;
+  req.abort = &r->t->cancel;
+  req.timeout_ms = 15000;
+  if(r->isq) {
+    req.user_agent = QUARK_DL_UA;
+    if(r->hdrs[0]) {
+      req.extra_headers = r->hdrs;
+    }
+  }
+  if(http_perform(&req, res) < 0) {
+    /* A 200 slipped through the sink's refusal (server ignored Range and sent
+     * the whole file): that is permanent for a segmented range, not a retry. */
+    if(res->status == 200) {
+      return -3;
+    }
+    snprintf(r->t->err, sizeof(r->t->err), "%s",
+             res->err[0] ? res->err : "传输失败");
+    return r->t->cancel ? -2 : -1;
+  }
+  if(res->status == 416) {
+    /* This range is already complete on the server's view; nothing to fetch. */
+    return 0;
+  }
+  if(res->status == 400 || res->status == 401 || res->status == 403 ||
+     res->status == 404 || res->status == 410 || res->status == 412) {
+    if(res->status == 412) {
+      snprintf(r->t->err, sizeof(r->t->err),
+               "HTTP 412：CDN 拒绝，请回网盘页重新加入（会换新直链）");
+    } else if(res->status == 403 && strstr(r->errbody, "SignatureDoesNotMatch")) {
+      snprintf(r->t->err, sizeof(r->t->err),
+               "HTTP 403：直链签名不匹配，请回网盘页重新加入（会换新直链）");
+    } else {
+      snprintf(r->t->err, sizeof(r->t->err), "HTTP %d：链接无效或已过期",
+               res->status);
+    }
+    return -3;
+  }
+  if(res->status != 200 && res->status != 206) {
+    snprintf(r->t->err, sizeof(r->t->err), "HTTP %d", res->status);
+    return res->status == 412 ? -3 : -1;
+  }
+  /* 200 means the server ignored Range: the whole file came back, so this
+   * range is a lost cause only if the server really ignored it (a single range
+   * request answered 200 is the whole file, not this slice). */
+  if(res->status == 200) {
+    return -3;
+  }
+  return 0;
+}
+
+/* A range thread. Runs seg_fetch, retries up to 4 times, then marks itself done
+ * and signals the coordinator. */
+typedef struct {
+  seg_range r;
+  int rc;
+  pthread_t th;
+  volatile int done;    /* 1 once the thread has recorded its result */
+} seg_thread;
+
+/* Shared coordinator state, one per segmented download. */
+typedef struct {
+  pthread_mutex_t lock;
+  pthread_cond_t cond;
+  int in_flight;        /* threads running, guarded by lock */
+  int cancelled;        /* set when the whole file is cancelled */
+} seg_pool;
+
+static void *
+seg_worker(void *arg) {
+  seg_thread *st = (seg_thread *)arg;
+  seg_range *r = &st->r;
+  seg_pool *pool = (seg_pool *)r->pool;
+  int attempt;
+
+  st->rc = -1;
+  for(attempt = 1; attempt <= 4; attempt++) {
+    st->rc = seg_fetch(r);
+    if(st->rc == 0 || st->rc == -2 || st->rc == -3) {
+      break;
+    }
+    if(r->t->cancel) {
+      st->rc = -2;
+      break;
+    }
+    if(attempt < 4) {
+      sleep((unsigned)(1u << (unsigned)(attempt - 1)));
+    }
+  }
+  pthread_mutex_lock(&pool->lock);
+  pool->in_flight--;
+  st->done = 1;
+  pthread_cond_signal(&pool->cond);
+  pthread_mutex_unlock(&pool->lock);
+  return NULL;
+}
+
+/* Segmented download of one file. Returns the same codes as dl_attempt.
+ * `have` is the number of contiguous bytes already on disk; ranges wholly below
+ * it are skipped, and the first partial range resumes from its offset. */
+static int
+dl_segmented(dl_task *t, int fd, long long have, long long total) {
+  long long span = total - have;
+  int n = (int)((span + SEG_BYTES - 1) / SEG_BYTES);
+  int next = 0;           /* next range index to launch */
+  int launched = 0;       /* ranges whose thread was started */
+  int result = 0;         /* aggregate: 0 ok, -2 cancelled, -3 permanent */
+  int i;
+  seg_pool pool;
+  seg_thread *st;
+  char hdrs[QUARK_COOKIE_MAX + 96];
+  int isq;
+
+  if(n <= 0) {
+    return 0;
+  }
+  if(n > 4096) {
+    snprintf(t->err, sizeof(t->err), "文件分片过多");
+    return -3;
+  }
+
+  /* Pre-size the file so pwrite to a high offset cannot run off the end and the
+   * final size is right even while the tail ranges are still unwritten. */
+  if(ftruncate(fd, (off_t)total) != 0) {
+    snprintf(t->err, sizeof(t->err), "预分配失败: %s", strerror(errno));
+    return -3;
+  }
+
+  hdr_snapshot(hdrs, sizeof(hdrs));
+  isq = quark_host(t->url);
+
+  st = (seg_thread *)calloc((size_t)n, sizeof(*st));
+  if(!st) {
+    snprintf(t->err, sizeof(t->err), "内存不足");
+    return -3;
+  }
+  pthread_mutex_init(&pool.lock, NULL);
+  pthread_cond_init(&pool.cond, NULL);
+  pool.in_flight = 0;
+  pool.cancelled = 0;
+
+  boot_trace("下载 %s：分片 %d 片（每片 %lld 字节），续传 %lld 字节，登录头=%s",
+             t->name, n, SEG_BYTES, have,
+             isq ? (hdrs[0] ? "是" : "否（没有会话 cookie）") : "不需要");
+
+  /* Launch ranges, at most SEG_CONNS in flight, until all are started. When the
+   * pool is full, wait for one to finish before launching the next. */
+  while(next < n) {
+    long long begin;
+    long long end;
+    seg_range *r;
+    seg_thread *s;
+
+    pthread_mutex_lock(&pool.lock);
+    while(pool.in_flight >= SEG_CONNS && !t->cancel) {
+      pthread_cond_wait(&pool.cond, &pool.lock);
+    }
+    if(t->cancel) {
+      pool.cancelled = 1;
+      pthread_mutex_unlock(&pool.lock);
+      break;
+    }
+    pthread_mutex_unlock(&pool.lock);
+
+    begin = have + (long long)next * SEG_BYTES;
+    end = begin + SEG_BYTES - 1;
+    if(end >= total) {
+      end = total - 1;
+    }
+    if(begin > end) {
+      next++;
+      continue;
+    }
+    s = &st[next];
+    memset(s, 0, sizeof(*s));
+    r = &s->r;
+    r->t = t;
+    r->fd = fd;
+    r->begin = begin;
+    r->end = end;
+    r->offset = 0;
+    r->pool = &pool;
+    snprintf(r->url, sizeof(r->url), "%s", t->url);
+    snprintf(r->hdrs, sizeof(r->hdrs), "%s", hdrs);
+    r->isq = isq;
+
+    pthread_mutex_lock(&pool.lock);
+    if(pool.cancelled) {
+      pthread_mutex_unlock(&pool.lock);
+      next++;
+      continue;
+    }
+    pool.in_flight++;
+    pthread_mutex_unlock(&pool.lock);
+
+    if(pthread_create(&s->th, NULL, seg_worker, s) != 0) {
+      pthread_mutex_lock(&pool.lock);
+      pool.in_flight--;
+      pthread_mutex_unlock(&pool.lock);
+      snprintf(t->err, sizeof(t->err), "无法创建分片线程");
+      result = -3;
+      break;
+    }
+    launched++;
+    next++;
+  }
+
+  /* Join every launched thread and fold its result. */
+  for(i = 0; i < launched; i++) {
+    seg_thread *s = &st[i];
+
+    pthread_join(s->th, NULL);
+    if(s->rc == -2) {
+      result = -2;
+    } else if(s->rc == -3 && result == 0) {
+      result = -3;
+    } else if(s->rc == -1 && result == 0) {
+      /* A range that exhausted its retries but was not cancelled or refused is
+       * a transport failure; retry the whole file once at the dl_attempt level. */
+      result = -1;
+    }
+  }
+
+  free(st);
+  pthread_cond_destroy(&pool.cond);
+  pthread_mutex_destroy(&pool.lock);
+  return result;
+}
+
+/* 0 done, -1 retry, -2 cancelled, -3 permanent. */
+
+/* Asks the server for the file's total size without downloading the file. A
+ * one-byte Range probe learns the size from Content-Range and proves the server
+ * honours ranges; the sink aborts after the first byte so a server that ignores
+ * Range (200 + whole file) is cut off instead of streamed. Returns 0 when the
+ * server ranges (206), 1 when it does not (200), or a negative code on failure.
+ * On 0/1, *total holds the full size. */
+static int
+probe_abort(void *ctx, const void *data, size_t len) {
+  (void)ctx;
+  (void)data;
+  (void)len;
+  /* One byte is enough to have learned the size from the headers. */
+  return 1;
+}
+
+static int
+dl_probe_total(dl_task *t, const char *hdrs, int isq, long long *total) {
+  http_req req;
+  http_result res;
+
+  *total = -1;
+  memset(&res, 0, sizeof(res));
+  memset(&req, 0, sizeof(req));
+  req.url = t->url;
+  /* bytes=1-2: a non-zero start so a server that only ranges on a non-zero
+   * offset (and the test mock) still answers 206, which is what proves ranges
+   * work. The two bytes are discarded; the size comes from Content-Range. */
+  req.range_from = 1;
+  req.range_end = 2;
+  req.write = probe_abort; /* stop after the first byte */
+  req.write_ctx = NULL;
+  req.abort = &t->cancel;
+  req.timeout_ms = 15000;
+  if(isq) {
+    req.user_agent = QUARK_DL_UA;
+    if(hdrs[0]) {
+      req.extra_headers = hdrs;
+    }
+  }
+  /* The probe's write callback aborts the body on purpose, so http_perform
+   * returns < 0; the status and size are still in `res`. */
+  http_perform(&req, &res);
+  if(res.total > 0) {
+    *total = res.total;
+  } else if(res.length > 0) {
+    *total = res.length;
+  }
+  if(res.status == 400 || res.status == 401 || res.status == 403 ||
+     res.status == 404 || res.status == 410 || res.status == 412) {
+    if(res.status == 412) {
+      snprintf(t->err, sizeof(t->err),
+               "HTTP 412：CDN 拒绝，请回网盘页重新加入（会换新直链）");
+    } else {
+      snprintf(t->err, sizeof(t->err), "HTTP %d：链接无效或已过期", res.status);
+    }
+    return -3;
+  }
+  if(res.status != 200 && res.status != 206) {
+    if(res.status == 0 && res.err[0]) {
+      /* Transport failed before any status line (connection refused, TLS). */
+      snprintf(t->err, sizeof(t->err), "%s", res.err);
+      return t->cancel ? -2 : -1;
+    }
+    snprintf(t->err, sizeof(t->err), "HTTP %d", res.status);
+    return res.status == 412 ? -3 : -1;
+  }
+  return res.status == 206 ? 0 : 1;
 }
 
 /* 0 done, -1 retry, -2 cancelled, -3 permanent. */
@@ -598,11 +988,64 @@ dl_attempt(dl_task *t) {
     return -3;
   }
 
-  fd = open(part, O_WRONLY | O_CREAT, 0644);
+  fd = open(part, O_RDWR | O_CREAT, 0644);
   if(fd < 0) {
     snprintf(t->err, sizeof(t->err), "无法写入 %s: %s", part, strerror(errno));
     return -3;
   }
+  hdr_snapshot(hdrs, sizeof(hdrs));
+  isq = quark_host(t->url);
+
+  /* Learn the size before choosing a path: a big file is split into ranges and
+   * fetched over several connections (a single connection is CDN-throttled),
+   * a small one is read in one go. The probe also proves the server honours
+   * Range, which the segmented path depends on. */
+  {
+    long long total = -1;
+    int prc = dl_probe_total(t, hdrs, isq, &total);
+
+    if(prc < 0) {
+      close(fd);
+      return prc;
+    }
+    if(total > 0) {
+      t->total = total;
+    }
+    if(total >= SEG_MIN_BYTES && prc == 0) {
+      /* Big file and the server ranges: segmented download. It writes straight
+       * into this fd, so nothing here touches the single-connection sink. */
+      int seg;
+
+      t->done = have;
+      seg = dl_segmented(t, fd, have, total);
+
+      if(seg == 0) {
+        if(fsync(fd) != 0) {
+          int saved = errno;
+
+          close(fd);
+          snprintf(t->err, sizeof(t->err), "落盘失败: %s", strerror(saved));
+          return -1;
+        }
+        close(fd);
+        if(rename(part, final) != 0) {
+          snprintf(t->err, sizeof(t->err), "重命名失败: %s", strerror(errno));
+          return -1;
+        }
+        if(t->total <= 0) {
+          t->total = t->done;
+        }
+        t->err[0] = 0;
+        return 0;
+      }
+      /* A segmented failure: -2/-3 fall through to the worker's state machine;
+       * -1 means "retry the whole file", which also falls through. */
+      close(fd);
+      return seg;
+    }
+  }
+
+  /* Single connection: seek to the resume offset and stream the rest. */
   if(lseek(fd, have, SEEK_SET) < 0) {
     snprintf(t->err, sizeof(t->err), "定位失败: %s", strerror(errno));
     close(fd);
@@ -623,8 +1066,6 @@ dl_attempt(dl_task *t) {
   req.write_ctx = &sink;
   req.abort = &t->cancel;
   req.timeout_ms = 15000;
-  hdr_snapshot(hdrs, sizeof(hdrs));
-  isq = quark_host(t->url);
   if(isq) {
     req.user_agent = QUARK_DL_UA;
     if(hdrs[0]) {

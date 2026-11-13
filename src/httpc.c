@@ -548,9 +548,16 @@ http_perform(const http_req *req, http_result *out) {
     if(!rc) {
       rc = app(head, HDR_MAX, &used, "Connection: close\r\n");
     }
-    if(!rc && req->range_from > 0) {
-      rc = app(head, HDR_MAX, &used, "Range: bytes=%lld-\r\n",
-               req->range_from);
+    if(!rc && (req->range_from > 0 || req->range_end > 0)) {
+      if(req->range_end > 0) {
+        /* Closed range: either a split of a segmented download or a size probe
+         * (range_from 0, range_end 0-ish). Both ends are explicit. */
+        rc = app(head, HDR_MAX, &used, "Range: bytes=%lld-%lld\r\n",
+                 req->range_from, req->range_end);
+      } else {
+        rc = app(head, HDR_MAX, &used, "Range: bytes=%lld-\r\n",
+                 req->range_from);
+      }
     }
     if(!rc && req->body_len > 0) {
       rc = app(head, HDR_MAX, &used, "Content-Length: %lu\r\n",
