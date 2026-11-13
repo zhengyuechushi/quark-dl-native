@@ -16,9 +16,9 @@
 | 项 | 值 |
 |---|---|
 | 版本 | 0.3.0 |
-| build id | 见 CI（ELF 里可 `grep` 到完整 sha，用来确认刷进去的是哪一版） |
-| 大小 | 约 900 KB（mbedTLS 静态链接 + 200 KB 根证书库 + 业务层） |
-| CI | 见最近一次 run，`elf`、`linux-smoke` 两个作业 |
+| build id | `1e4fd1f`（ELF 里可 `grep` 到完整 sha，用来确认刷进去的是哪一版） |
+| 大小 | 834 KB（mbedTLS + 200 KB 根证书库 + 业务层） |
+| CI | run `43452634668`，`elf` 与 `linux-smoke` 全绿，含 JSON 解析器单测 |
 
 阶段一、二在 CI 里长期成立的那几项：https 用自签 CA 通过、换一个未知 CA 被拒**并报出被拒的那张证书**、
 300 KB 逐字节一致、预置 `.part` 产生 `Range: bytes=120000-` 并续传成功、chunked 无 `Content-Length`、
