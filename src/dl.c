@@ -43,7 +43,9 @@ typedef struct {
   long long total;
   char url[QUARK_URL_MAX];
   char dir[300];
-  char name[160];
+  /* A name can now be a relative path ("剧集/第01话.mkv") so the download
+   * recreates the folder tree it came from, not a bare file name. */
+  char name[512];
   char err[140];
 } dl_task;
 
@@ -109,7 +111,8 @@ jstr(char *buf, size_t cap, size_t *used, const char *s) {
 
 static int
 mkdirs(const char *path) {
-  char tmp[400];
+  /* Sized for a download directory (300) plus a nested relative path (512). */
+  char tmp[1024];
   size_t i;
   size_t n;
 
@@ -193,25 +196,77 @@ hdr_snapshot(char *out, size_t cap) {
   pthread_mutex_unlock(&g_lock);
 }
 
+/* Cleans a file name, and now a relative path too. A quark folder can hand the
+ * queue a name like "剧集/第01话.mkv": the '/' is a real separator that must
+ * survive so the download recreates the folder tree on disk, not a character to
+ * mangle. So each segment is cleaned on its own, slashes are kept, and the two
+ * things that would let a name escape the download directory are stripped:
+ * a leading '/' (absolute path) and any ".." segment (parent traversal). */
 static void
 sanitize_name(const char *in, char *out, size_t cap) {
   size_t o = 0;
+  int seg_start = 1; /* beginning of a segment: nothing written for it yet */
 
   for(; in && *in && o + 1 < cap; in++) {
     unsigned char c = (unsigned char)*in;
 
+    if(c == '/') {
+      /* Collapse runs and drop a trailing slash; a lone '/' becomes a segment
+       * boundary, never a path that starts at the filesystem root. */
+      if(o && out[o - 1] != '/') {
+        out[o++] = '/';
+      }
+      seg_start = 1;
+      continue;
+    }
     if((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
        (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_' ||
        c == '(' || c == ')' || c == ' ' || c >= 0x80) {
+      if(seg_start && (c == ' ' || c == '.')) {
+        /* A segment must not begin with a space or a dot: a dot-prefixed name
+         * is how "." and ".." hide, and a leading space is what trips up a
+         * rename later. Skip it. */
+        continue;
+      }
       out[o++] = (char)c;
+      seg_start = 0;
     } else {
+      if(seg_start) {
+        /* Drop a character that would only pad the front of a segment. */
+        continue;
+      }
       out[o++] = '_';
     }
   }
+  /* Trim spaces/dots off the very end, then collapse any trailing slash so the
+   * name never ends with one. */
   while(o && (out[o - 1] == ' ' || out[o - 1] == '.')) {
     o--;
   }
+  while(o > 1 && out[o - 1] == '/') {
+    o--;
+  }
   out[o] = 0;
+
+  /* A ".." segment anywhere in the path would climb out of the download
+   * directory, and "." is a no-op segment. Replace each with "_" in place. */
+  {
+    char *seg = out;
+    for(;;) {
+      char *slash = strchr(seg, '/');
+      size_t seglen = slash ? (size_t)(slash - seg) : strlen(seg);
+
+      if((seglen == 2 && seg[0] == '.' && seg[1] == '.') ||
+         (seglen == 1 && seg[0] == '.')) {
+        memset(seg, '_', seglen);
+      }
+      if(!slash) {
+        break;
+      }
+      seg = slash + 1;
+    }
+  }
+
   if(!o || !strcmp(out, ".") || !strcmp(out, "..")) {
     snprintf(out, cap, "download.bin");
   }
@@ -379,7 +434,7 @@ load_queue(void) {
      * Saying so at load time keeps the list honest, and it is what gives the
      * "重新下载" button something to mean. */
     if(t->state == DL_DONE) {
-      char full[700];
+      char full[1024];
       struct stat st;
 
       if(path_join(full, sizeof(full), t->dir, t->name, "") != 0 ||
@@ -461,8 +516,10 @@ sink_write(void *ctx, const void *data, size_t len) {
 /* 0 done, -1 retry, -2 cancelled, -3 permanent. */
 static int
 dl_attempt(dl_task *t) {
-  char part[520];
-  char final[520];
+  /* dir (300) + name (512) + a slash and ".part" suffix. The name can now be a
+   * relative path, so this has to be able to hold the whole thing. */
+  char part[1024];
+  char final[1024];
   struct stat st;
   sink_ctx sink;
   http_result res;
@@ -480,6 +537,31 @@ dl_attempt(dl_task *t) {
      path_join(final, sizeof(final), t->dir, t->name, "")) {
     snprintf(t->err, sizeof(t->err), "目标路径过长");
     return -3;
+  }
+  /* A name can now carry a relative path ("剧集/第01话/第03集.mkv"). The base
+   * directory was made at add time, but the folders under it are made here,
+   * right before the first write, so the tree the file came from is recreated
+   * on disk. */
+  {
+    const char *slash = strrchr(t->name, '/');
+
+    if(slash && slash != t->name) {
+      char parent[1024];
+      char rel[512];
+      size_t n = (size_t)(slash - t->name);
+
+      if(n >= sizeof(rel)) {
+        n = sizeof(rel) - 1;
+      }
+      memcpy(rel, t->name, n);
+      rel[n] = 0;
+      if(path_join(parent, sizeof(parent), t->dir, rel, "") == 0 &&
+         mkdirs(parent) != 0) {
+        snprintf(t->err, sizeof(t->err), "无法创建目录 %s: %s", parent,
+                 strerror(errno));
+        return -3;
+      }
+    }
   }
   if(stat(final, &st) == 0 && st.st_size > 0) {
     t->done = (long long)st.st_size;
@@ -778,7 +860,7 @@ dl_set_default_dir(const char *dir, char *err, size_t cap) {
 int
 dl_add(const char *url, const char *name, const char *dir, char *err,
        size_t cap) {
-  char clean[160];
+  char clean[512];
   dl_task *t = NULL;
   int i;
   int id;
@@ -1039,7 +1121,7 @@ dl_json(char *out, size_t cap) {
      * page uses to decide between "已完成" and "重新下载". A task that already
      * knows its file is gone reports false without another stat. */
     if(t->state == DL_DONE || t->state == DL_MISSING) {
-      char full[700];
+      char full[1024];
       struct stat st;
 
       exists = (path_join(full, sizeof(full), t->dir, t->name, "") == 0 &&

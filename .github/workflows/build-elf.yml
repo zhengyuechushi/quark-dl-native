@@ -76,6 +76,10 @@ jobs:
           # The 日志 tab reads the trail through its own endpoint; without it the
           # page's fourth tab would show "还没有日志" forever.
           grep -aqF "/api/log" "$ELF" || { echo "log endpoint missing"; exit 1; }
+          # A folder download recreates the tree it came from: a name carrying a
+          # relative path must have its parent directory made on the way down.
+          # This string is the failure path of that mkdirs.
+          grep -aqF "无法创建目录" "$ELF" || { echo "relative-path mkdir missing"; exit 1; }
           echo "ok"
 
       - uses: actions/upload-artifact@v4

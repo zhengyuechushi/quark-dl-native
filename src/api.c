@@ -1315,9 +1315,14 @@ api_quark_list(struct MHD_Connection *conn) {
 #define QUARK_ADD_MAX 2000
 #define QUARK_BATCH 50
 
+/* A relative path can be several folders deep, so the collected name needs
+ * more room than a bare file name. It must match dl_task.name in dl.c, which
+ * is what it is copied into on the way to the queue. */
+#define ADD_NAME_MAX 512
+
 typedef struct {
   char fid[QUARK_FID_MAX];
-  char name[QUARK_NAME_MAX];
+  char name[ADD_NAME_MAX];
 } add_item;
 
 typedef struct {
@@ -1331,7 +1336,6 @@ static int
 collect_cb(void *ctx, const quark_entry *e, const char *pdir) {
   collect_ctx *c = (collect_ctx *)ctx;
 
-  (void)pdir;
   if(c->count >= c->cap) {
     /* Returning non-zero stops the walk, which is the only way to report that
      * a folder holds more than this endpoint will take. */
@@ -1339,7 +1343,13 @@ collect_cb(void *ctx, const quark_entry *e, const char *pdir) {
     return 1;
   }
   snprintf(c->out[c->count].fid, QUARK_FID_MAX, "%s", e->fid);
-  snprintf(c->out[c->count].name, QUARK_NAME_MAX, "%s", e->name);
+  /* pdir is the folder's relative path ("剧集/第01话") or "" at the top; the
+   * name becomes "剧集/第01话/第03集.mkv" so the download recreates the tree. */
+  if(pdir && pdir[0]) {
+    snprintf(c->out[c->count].name, ADD_NAME_MAX, "%s/%s", pdir, e->name);
+  } else {
+    snprintf(c->out[c->count].name, ADD_NAME_MAX, "%s", e->name);
+  }
   c->count++;
   return 0;
 }
@@ -1462,7 +1472,7 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
       break;
     }
     snprintf(arr[cc.count].fid, QUARK_FID_MAX, "%s", fid);
-    snprintf(arr[cc.count].name, QUARK_NAME_MAX, "%s", name ? name : "");
+    snprintf(arr[cc.count].name, ADD_NAME_MAX, "%s", name ? name : "");
     cc.count++;
   }
   free(items);

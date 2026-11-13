@@ -365,6 +365,41 @@ check('HTTP 错误也说得出来', /加入失败/.test(msg.textContent) && /500
       msg.textContent);
 check('并且带上了耗时', /用时 \d+ 秒/.test(msg.textContent), msg.textContent);
 
+console.log('\n队列按顶层文件夹分组');
+/* Feed the queue a mix of folder tasks (relative-path names) and a bare file,
+ * then run the queue poll and inspect the DOM the page built. */
+DEFAULTS['/api/dl/list'] = () => ({
+  ok: true,
+  tasks: [
+    { id: 1, state: 'queued', done: 0, total: 100, attempts: 0, name: '剧集/第01话/第01集.mkv', dir: '/data/homebrew', exists: null },
+    { id: 2, state: 'done', done: 100, total: 100, attempts: 0, name: '剧集/第02话/第01集.mkv', dir: '/data/homebrew', exists: true },
+    { id: 3, state: 'queued', done: 0, total: 50, attempts: 0, name: '音乐/专辑/单曲.mp3', dir: '/data/homebrew', exists: null },
+    { id: 4, state: 'queued', done: 0, total: 200, attempts: 0, name: '单文件.bin', dir: '/data/homebrew', exists: null },
+  ],
+});
+route = (method, url) => {
+  const d = DEFAULTS[url.split('?')[0]];
+  return { status: 200, text: JSON.stringify(d ? d() : {}) };
+};
+drain(); /* pollQueue was scheduled at start-up; run it against the new list */
+const tasksHost = nodeFor('tasks');
+const grps = tasksHost.children.filter((c) => c.className.indexOf('grp') === 0);
+check('两个文件夹分组', grps.length === 2, `got ${grps.length}`);
+const head0 = grps[0].children.find((c) => c.className === 'grp-head');
+check('第一个分组标题是「剧集」',
+      !!head0 && head0.children.some((c) => c.className === 'grp-title' && c.textContent === '剧集'));
+check('分组计数是 done/总数',
+      !!head0 && head0.children.some((c) => c.className === 'grp-count' && c.textContent === '1 / 2'));
+const flat = tasksHost.children.filter((c) => c.className === 'task');
+check('裸文件仍平铺', flat.length === 1);
+check('分组默认折叠', !/\bopen\b/.test(grps[0].className), grps[0].className);
+/* Clicking the header toggles the open class. */
+const head = grps[0].children.find((c) => c.className === 'grp-head');
+head.onclick();
+check('点击后展开', /\bopen\b/.test(grps[0].className), grps[0].className);
+head.onclick();
+check('再点收起', !/\bopen\b/.test(grps[0].className), grps[0].className);
+
 console.log('');
 if (failures) {
   console.log(`${failures} 项失败`);

@@ -94,6 +94,22 @@
   .bar > i { display: block; height: 100%; background: #4f8cff; width: 0; transition: width .4s; }
   .bar.done > i { background: #4ade80; }
   .bar.failed > i { background: #f87171; }
+  /* A folder group in the queue: one collapsible header per top-level folder,
+   * the files inside listed when opened. */
+  .grp { border-top: 1px solid #232a33; }
+  .grp:first-child { border-top: 0; }
+  .grp-head { display: flex; align-items: center; gap: 9px; padding: 11px 2px; cursor: pointer; user-select: none; }
+  .grp-head:hover { background: #1a2028; }
+  .grp-caret { color: #7aa2ff; font-size: 12px; width: 12px; text-align: center; transition: transform .15s; flex: 0 0 auto; }
+  .grp.open > .grp-head .grp-caret { transform: rotate(90deg); }
+  .grp-icon { color: #7aa2ff; flex: 0 0 auto; font-size: 14px; }
+  .grp-title { flex: 1; font-size: 14px; word-break: break-all; }
+  .grp-count { color: #8b97a5; font-size: 12.5px; flex: 0 0 auto; }
+  .grp-body { display: none; padding-left: 16px; }
+  .grp.open > .grp-body { display: block; }
+  .grp-body .task { border-top-color: #1c2229; }
+  .grp-body .task .name { font-size: 13px; color: #c9d2dc; }
+  .grp-body .task { border-left: 1px solid #232a33; padding-left: 12px; }
   .result { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; color: #c9d2dc; white-space: pre-wrap; word-break: break-all; margin-top: 12px; }
   .crumb { font-size: 13px; color: #8b97a5; margin-bottom: 10px; word-break: break-all; }
   .crumb a { color: #7aa2ff; cursor: pointer; }
@@ -315,7 +331,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.5.0';
+  var PAGE_V = '0.6.0';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -511,6 +527,67 @@
     return box;
   }
 
+  /* A task whose name carries a relative path ("剧集/第01话/第03集.mkv") gets a
+   * top-level folder group. Returns the first path segment, or "" when the name
+   * is a bare file (a direct link or a file picked straight from the root). */
+  function topFolder(name) {
+    var n = name || '';
+    var slash = n.indexOf('/');
+    return slash > 0 ? n.slice(0, slash) : '';
+  }
+
+  /* Renders one collapsible folder group. `folder` is the top-level name, and
+   * `items` are the tasks whose relative path starts with it. */
+  function groupNode(folder, items) {
+    var box = document.createElement('div');
+    box.className = 'grp';
+
+    var head = document.createElement('div');
+    head.className = 'grp-head';
+
+    var caret = document.createElement('span');
+    caret.className = 'grp-caret';
+    caret.textContent = '>';
+
+    var icon = document.createElement('span');
+    icon.className = 'grp-icon';
+    /* No emoji here: the PS5 font is a GB2312 subset and would render a folder
+     * glyph as a question mark. */
+    icon.textContent = '文件夹';
+
+    var title = document.createElement('span');
+    title.className = 'grp-title';
+    title.textContent = folder;
+
+    var count = document.createElement('span');
+    count.className = 'grp-count';
+    var done = 0;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].state === 'done') done++;
+    }
+    count.textContent = done + ' / ' + items.length;
+
+    head.appendChild(caret);
+    head.appendChild(icon);
+    head.appendChild(title);
+    head.appendChild(count);
+    box.appendChild(head);
+
+    var body = document.createElement('div');
+    body.className = 'grp-body';
+    for (var j = 0; j < items.length; j++) {
+      body.appendChild(taskNode(items[j]));
+    }
+    box.appendChild(body);
+
+    head.onclick = function () {
+      /* className string toggle, not classList: the console's browser is old
+       * enough that classList is not worth betting the page on. */
+      box.className = (box.className === 'grp open') ? 'grp' : 'grp open';
+    };
+    return box;
+  }
+
   function pollQueue() {
     if (queueBusy || addBusy) return;
     queueBusy = true;
@@ -527,8 +604,25 @@
         host.appendChild(empty);
         return;
       }
+      /* Group tasks that came from a folder under their top-level name, in the
+       * order the folders first appear. Everything else stays flat. */
+      var groups = [];
+      var groupIndex = {};
+      var loose = [];
       for (var i = 0; i < tasks.length; i++) {
-        host.appendChild(taskNode(tasks[i]));
+        var f = topFolder(tasks[i].name);
+        if (!f) { loose.push(tasks[i]); continue; }
+        if (!(f in groupIndex)) {
+          groupIndex[f] = groups.length;
+          groups.push({ folder: f, items: [] });
+        }
+        groups[groupIndex[f]].items.push(tasks[i]);
+      }
+      for (var g = 0; g < groups.length; g++) {
+        host.appendChild(groupNode(groups[g].folder, groups[g].items));
+      }
+      for (var k = 0; k < loose.length; k++) {
+        host.appendChild(taskNode(loose[k]));
       }
     });
   }

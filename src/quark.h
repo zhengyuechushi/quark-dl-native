@@ -138,7 +138,13 @@ const char *quark_download_cookie(void);
 
 /* Walks a directory tree breadth-first and calls back for every file found.
  * Folders nested deeper than depth_limit are skipped rather than silently
- * half-downloaded. */
+ * half-downloaded.
+ *
+ * The callback's `pdir` is the *relative path* of the directory that holds the
+ * file ("" for the top level, "剧集/第01话" for a nested one). It is a path, not
+ * a fid: the walker tracks the folder names it descended through so a download
+ * can recreate the tree on disk. The file's own name is in e->name; the full
+ * relative path is pdir + "/" + e->name. */
 typedef int (*quark_visit_cb)(void *ctx, const quark_entry *e, const char *pdir);
 
 int quark_walk(const quark_session *s, const char *pdir, int depth_limit,

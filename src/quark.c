@@ -1319,6 +1319,9 @@ quark_walk(const quark_session *s, const char *pdir, int depth_limit,
    * recurse, and the pending list is what makes the depth limit expressible. */
   typedef struct {
     char fid[QUARK_FID_MAX];
+    /* The path from the walked root down to this directory, using the folder
+     * names as Quark listed them ("剧集/第01话"). Empty string at the root. */
+    char rel[QUARK_NAME_MAX * 4];
     int depth;
   } pending;
   pending *stack;
@@ -1337,16 +1340,19 @@ quark_walk(const quark_session *s, const char *pdir, int depth_limit,
     return -1;
   }
   snprintf(stack[0].fid, sizeof(stack[0].fid), "%s", (pdir && pdir[0]) ? pdir : "0");
+  stack[0].rel[0] = 0;
   stack[0].depth = 0;
   sp = 1;
 
   while(sp > 0) {
     char cur[QUARK_FID_MAX];
+    char currel[sizeof(stack[0].rel)];
     int depth = stack[--sp].depth;
     int page_no = 1;
     int total = 0;
 
     snprintf(cur, sizeof(cur), "%s", stack[sp].fid);
+    snprintf(currel, sizeof(currel), "%s", stack[sp].rel);
     for(;;) {
       int n = quark_list(s, cur, page_no, 200, page, 200, &total, err, errcap);
       int i;
@@ -1378,10 +1384,18 @@ quark_walk(const quark_session *s, const char *pdir, int depth_limit,
             stack = ns;
           }
           snprintf(stack[sp].fid, sizeof(stack[sp].fid), "%s", page[i].fid);
+          /* Extend the parent's relative path with this folder's name, so the
+           * files inside come back with a path they can be saved under. */
+          if(currel[0]) {
+            snprintf(stack[sp].rel, sizeof(stack[sp].rel), "%s/%s", currel,
+                     page[i].name);
+          } else {
+            snprintf(stack[sp].rel, sizeof(stack[sp].rel), "%s", page[i].name);
+          }
           stack[sp].depth = depth + 1;
           sp++;
         } else {
-          if(cb && cb(ctx, &page[i], cur)) {
+          if(cb && cb(ctx, &page[i], currel)) {
             snprintf(err, errcap, "回调中止");
             failed = 1;
             break;
