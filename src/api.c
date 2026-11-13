@@ -1086,27 +1086,6 @@ api_quark_login(struct MHD_Connection *conn, const char *body, size_t size) {
            enick, s.total_bytes, s.used_bytes, nkeys, ekeys);
   return send_json(conn, MHD_HTTP_OK, json);
 }
-    /* The cookie is kept anyway. It may be the network that is down, and
-     * throwing away a probably-good cookie because the console could not reach
-     * the service would make the user paste it again for nothing. */
-    char eraw[700];
-
-    saved = quark_save(&s);
-    json_escape(eerr, sizeof(eerr), err);
-    json_escape(eraw, sizeof(eraw), quark_last_raw());
-    snprintf(json, sizeof(json),
-             "{\"ok\":false,\"saved\":%s,\"error\":\"%s\",\"raw\":\"%s\"}",
-             saved == 0 ? "true" : "false", eerr, eraw);
-    return send_json(conn, MHD_HTTP_OK, json);
-  }
-  quark_save(&s);
-  json_escape(enick, sizeof(enick), s.nickname);
-  snprintf(json, sizeof(json),
-           "{\"ok\":true,\"nickname\":\"%s\",\"total_bytes\":%lld,"
-           "\"used_bytes\":%lld}",
-           enick, s.total_bytes, s.used_bytes);
-  return send_json(conn, MHD_HTTP_OK, json);
-}
 
 static enum MHD_Result
 api_quark_logout(struct MHD_Connection *conn, const char *method) {
