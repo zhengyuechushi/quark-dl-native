@@ -402,8 +402,15 @@ api_net_selftest(struct MHD_Connection *conn) {
   http_result res;
   http_req req;
 
+  /* The default has to be a host that actually serves a valid certificate, or
+   * the first click is a red cross on a machine that is perfectly fine.
+   * api.quark.cn was the obvious-looking choice and the wrong one: it resolves,
+   * but its ingress presents the "Kubernetes Ingress Controller Fake
+   * Certificate" and nothing else, so every health check started with a
+   * certificate failure that said nothing about this console. pan.quark.cn is
+   * on the *.quark.cn wildcard and is the host the next stage will talk to. */
   snprintf(url, sizeof(url), "%s",
-           (arg && *arg) ? arg : "https://api.quark.cn/");
+           (arg && *arg) ? arg : "https://pan.quark.cn/");
   /* Escaped once, used by every answer below. The URL is whatever the user
    * typed and the host is whatever it parsed to; either can carry a quote. */
   json_escape(eurl, sizeof(eurl), url);

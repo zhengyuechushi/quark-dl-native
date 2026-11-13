@@ -145,12 +145,54 @@ ssl_recv(void *ctx, unsigned char *buf, size_t len) {
   return (int)n;
 }
 
+/* mbedtls_x509_dn_gets writes RFC 2253, where a comma that belongs to the value
+ * rather than separating components comes out escaped: an organisation named
+ * "TrustAsia Technologies, Inc." is printed as "Technologies\, Inc.". On a
+ * console nobody reads the escaping rules, they read a backslash in the middle
+ * of a company name and wonder what broke. Put the characters back.
+ * This string is judged by a person deciding whether to trust a certificate,
+ * so a control byte is shown as '?' rather than pasted in raw. */
+static int
+dn_hex(char c) {
+  if(c >= '0' && c <= '9') return c - '0';
+  if(c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if(c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+static void
+dn_unescape(const char *in, char *out, size_t cap) {
+  size_t o = 0;
+
+  while(*in && o + 1 < cap) {
+    if(*in == '\\' && in[1]) {
+      int hi = dn_hex(in[1]);
+      int lo = hi >= 0 ? dn_hex(in[2]) : -1;
+
+      if(lo >= 0) {
+        int v = (hi << 4) | lo;
+
+        out[o++] = (v >= 0x20 && v != 0x7f) ? (char)v : '?';
+        in += 3;
+        continue;
+      }
+      if(strchr(",+\"\\<>;=#", in[1])) {
+        out[o++] = in[1];
+        in += 2;
+        continue;
+      }
+    }
+    out[o++] = *in++;
+  }
+  out[o] = 0;
+}
+
 static void
 tls_describe(net_conn *c) {
   const mbedtls_x509_crt *peer;
   const char *ver;
   const char *suite;
-  char dn[128];
+  char dn[160];
 
   /* Either of these can be NULL once a handshake has failed early, so they are
    * never handed to printf unguarded. */
@@ -163,10 +205,10 @@ tls_describe(net_conn *c) {
     return;
   }
   if(mbedtls_x509_dn_gets(dn, sizeof(dn), &peer->subject) > 0) {
-    snprintf(c->subject, sizeof(c->subject), "%s", dn);
+    dn_unescape(dn, c->subject, sizeof(c->subject));
   }
   if(mbedtls_x509_dn_gets(dn, sizeof(dn), &peer->issuer) > 0) {
-    snprintf(c->issuer, sizeof(c->issuer), "%s", dn);
+    dn_unescape(dn, c->issuer, sizeof(c->issuer));
   }
   snprintf(c->expires, sizeof(c->expires), "%04d-%02d-%02d", peer->valid_to.year,
            peer->valid_to.mon, peer->valid_to.day);

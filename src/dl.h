@@ -19,6 +19,10 @@
 #define DL_DONE 2
 #define DL_FAILED 3
 #define DL_CANCELED 4
+/* Finished once, but the file is no longer on disk. Its own state, because the
+ * task did not fail at anything - calling it "失败" makes a user look for a
+ * network problem that does not exist. Re-adding the URL queues it again. */
+#define DL_MISSING 5
 
 #define DL_MAX 64
 #define DL_LIMIT 3

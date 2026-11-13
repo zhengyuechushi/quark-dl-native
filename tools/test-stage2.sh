@@ -152,13 +152,13 @@ for t in d['tasks']:
         print(t['state'], '|', t.get('err', ''))
         break
 else:
-    print('missing')
+    print('gone')
 PY
 )
     case "$state" in
       "$want"*) return 0;;
       failed*|canceled*) fail "task $id ended as $state";;
-      missing*) fail "task $id vanished from the queue";;
+      gone*) fail "task $id vanished from the queue";;
     esac
     sleep 0.5
   done
@@ -260,5 +260,27 @@ say "the queue is written to disk"
 test -s "$DATA/downloads.txt" || fail "queue was not persisted"
 grep -q 'http' "$DATA/downloads.txt" || fail "queue file has no url"
 echo "persisted $(wc -l <"$DATA/downloads.txt") task(s)"
+
+say "after a restart, a finished task whose file is gone reads as missing"
+rm -f "$DEST/file"
+kill "$APP_PID" 2>/dev/null || true
+wait "$APP_PID" 2>/dev/null || true
+APP_PID=
+QDL_DATA_DIR="$DATA" QDL_DEFAULT_DIR="$DEST" QDL_CA_FILE="$WORK/good-ca.pem" \
+  "$BIN" >>"$WORK/server.log" 2>&1 &
+APP_PID=$!
+for _ in $(seq 1 40); do
+  curl -fsS "$BASE/api/health" >/dev/null 2>&1 && break
+  sleep 0.25
+done
+python3 - "$BASE" "$ID" <<'PY'
+import json, sys, urllib.request
+d = json.load(urllib.request.urlopen(sys.argv[1] + '/api/dl/list', timeout=10))
+t = [x for x in d['tasks'] if x['id'] == int(sys.argv[2])][0]
+assert t['state'] == 'missing', t
+assert t['exists'] is False, t
+print('state =', t['state'], '| exists =', t['exists'], '| total =', t['total'])
+PY
+echo "a deleted file is 'missing', not 'failed': nothing failed, the bytes left"
 echo
 echo "all stage-2 checks passed"

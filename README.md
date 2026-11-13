@@ -46,12 +46,14 @@
 ## 先做这一步：网络自检
 
 加载 ELF，浏览器打开 `http://<PS5-IP>:8765`，在「网络自检」里点**开始自检**。
-默认目标是 `https://api.quark.cn/`，结果逐行给出：
+默认目标是 `https://pan.quark.cn/`，结果逐行给出：
 
 ```
-✓ api.quark.cn → 1.2.3.4（getaddrinfo，12 ms）
-  TLS TLSv1.3 / TLS_AES_256_GCM_SHA384 · CN=*.quark.cn · 到期 2027-01-01
-  HTTP 404 · 128 字节 · 341 ms
+✓ pan.quark.cn → 203.119.174.54（getaddrinfo，12 ms）
+  TLS TLSv1.2 / TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+  服务器证书 C=CN, ST=Zhejiang, L=Hangzhou, O=Alibaba (China) Technology Co., Ltd., CN=*.alibaba.com · 到期 2027-03-26
+  签发者 C=BE, O=GlobalSign nv-sa, CN=GlobalSign GCC R46 OV TLS CA 2025
+  HTTP 200 · 42461 字节 · 341 ms
 ```
 
 这四行是唯一能同时说清四件事的地方：
@@ -60,6 +62,12 @@
 - **TLS 握手失败** → 网络被劫持/需要代理，或主机时间不对；
 - **证书校验失败** → 同上，这也是它必须单独报错的原因；
 - **有 HTTP 状态码** → 传输层通了，之后都是应用层的事。
+
+> **`api.quark.cn` 不要拿来当探针**（0.2.1 的默认值是它，选错了）。该域名解析得到
+> `203.119.174.x`，但那边 ingress 只吐 `Kubernetes Ingress Controller Fake
+> Certificate` 自签证书、HTTP 层 404，是台废弃入口。拿它自检等于每次开机先报一个红叉，
+> 而主机其实完全正常。真正可用的域名 `pan.quark.cn`、`drive-pc.quark.cn` 都挂在
+> `*.quark.cn` 这张 GlobalSign 泛域名证书下。
 
 ## 下载行为
 

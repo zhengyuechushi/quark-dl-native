@@ -87,10 +87,10 @@
     <h2>网络自检</h2>
     <p class="note" style="margin-top:0">
       这台主机能不能真的上网，取决于四件互相独立的事：域名解析、TCP、TLS 握手、证书校验。
-      点一次就知道断在哪一步。
+      点一次就知道断在哪一步。默认测的是 pan.quark.cn，也就是后面要拿网盘目录的那个域名。
     </p>
     <label class="field">测试地址</label>
-    <input id="probeUrl" value="https://api.quark.cn/" spellcheck="false">
+    <input id="probeUrl" value="https://pan.quark.cn/" spellcheck="false">
     <div class="toolbar">
       <button id="probe">开始自检</button>
       <span class="muted" id="probeState"></span>
@@ -159,7 +159,8 @@
     return (n / 1073741824).toFixed(2) + ' GB';
   }
 
-  var STATE = { queued: '等待中', running: '下载中', done: '已完成', failed: '失败', canceled: '已取消' };
+  var STATE = { queued: '等待中', running: '下载中', done: '已完成', failed: '失败',
+                canceled: '已取消', missing: '文件已被删除' };
 
   /* XMLHttpRequest rather than fetch: the console's browser is old enough that
    * fetch is not worth betting the whole page on. */
@@ -268,7 +269,9 @@
     meta.className = 'meta';
     var line = fmtSize(t.done) + (t.total > 0 ? ' / ' + fmtSize(t.total) : '');
     if (t.state === 'running' && t.attempts > 1) line += ' · 第 ' + t.attempts + ' 次尝试';
-    if (t.state === 'done' && t.exists === false && !t.err) line += ' · 文件已不在，可重新下载';
+    /* The bytes are gone but the size is still known, so show that instead of
+     * "0 / 285.8 MB", which reads like a download that failed at byte zero. */
+    if (t.state === 'missing') line = (t.total > 0 ? fmtSize(t.total) + ' · ' : '') + '文件已不在了';
     meta.textContent = line + (t.err ? ' · ' + t.err : '');
     box.appendChild(meta);
 
@@ -292,7 +295,7 @@
         json('POST', '/api/dl/cancel?id=' + t.id, '', function () { pollQueue(); });
       };
       box.appendChild(cancel);
-    } else if (t.state === 'failed' || t.state === 'canceled' ||
+    } else if (t.state === 'failed' || t.state === 'canceled' || t.state === 'missing' ||
                (t.state === 'done' && t.exists === false)) {
       /* 失败的链接多半是过期了；已完成但文件被删了，同一句话：再下一次。 */
       var again = document.createElement('button');
@@ -332,7 +335,7 @@
 
   el('probe').onclick = function () {
     var btn = el('probe');
-    var url = el('probeUrl').value.trim() || 'https://api.quark.cn/';
+    var url = el('probeUrl').value.trim() || 'https://pan.quark.cn/';
     btn.disabled = true;
     text('probeState', '正在测试…');
     el('probeOut').textContent = '';

@@ -332,9 +332,8 @@ load_queue(void) {
 
       if(path_join(full, sizeof(full), t->dir, t->name, "") != 0 ||
          stat(full, &st) != 0 || st.st_size <= 0) {
-        t->state = DL_FAILED;
+        t->state = DL_MISSING;
         t->done = 0;
-        snprintf(t->err, sizeof(t->err), "文件已不在了，可重新下载");
       }
     }
     if(t->id >= g_next_id) {
@@ -805,7 +804,8 @@ dl_clear_finished(void) {
     if(!t->id) {
       continue;
     }
-    if(t->state == DL_DONE || t->state == DL_FAILED || t->state == DL_CANCELED) {
+    if(t->state == DL_DONE || t->state == DL_FAILED || t->state == DL_CANCELED ||
+       t->state == DL_MISSING) {
       t->id = 0;
       n++;
     }
@@ -848,6 +848,7 @@ state_name(int state) {
     case DL_DONE: return "done";
     case DL_FAILED: return "failed";
     case DL_CANCELED: return "canceled";
+    case DL_MISSING: return "missing";
     default: return "unknown";
   }
 }
@@ -878,8 +879,9 @@ dl_json(char *out, size_t cap) {
     }
     first = 0;
     /* Only a finished task gets asked about its file; the answer is what the
-     * page uses to decide between "已完成" and "重新下载". */
-    if(t->state == DL_DONE) {
+     * page uses to decide between "已完成" and "重新下载". A task that already
+     * knows its file is gone reports false without another stat. */
+    if(t->state == DL_DONE || t->state == DL_MISSING) {
       char full[700];
       struct stat st;
 
