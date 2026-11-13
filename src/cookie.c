@@ -76,7 +76,8 @@ scan_header(const char *raw, char *out, size_t cap) {
   return 0;
 }
 
-/* cURL's own cookie switch, for the "-b 'a=b' --cookie 'a=b'" form. */
+/* cURL's own cookie switch: "-b value", "-bvalue", "--cookie value" and
+ * "--cookie=value" all mean the same thing. */
 static int
 scan_curl_b(const char *raw, char *out, size_t cap) {
   const char *p;
@@ -85,13 +86,18 @@ scan_curl_b(const char *raw, char *out, size_t cap) {
     const char *v = NULL;
     int n;
 
-    if(p[0] != '-' || p[1] != 'b') continue;
-    if(p[2] == ' ' || p[2] == '\t') {
-      v = p + 3;
+    if(p[0] != '-') continue;
+    if(p[1] == 'b') {
+      /* -b takes its value either attached or after a space. */
+      v = p + 2;
     } else if(ci_word(p, "--cookie")) {
       v = p + 8;
+    } else {
+      continue;
     }
-    if(!v) continue;
+    while(*v == ' ' || *v == '\t' || *v == '=') v++;
+    /* The long form without a value would otherwise swallow the URL that
+     * follows it; take_value rejects anything without an "=". */
     n = take_value(v, out, cap);
     if(looks_like_cookie(out)) return n;
     out[0] = 0;

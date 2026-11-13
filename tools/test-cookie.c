@@ -63,8 +63,13 @@ test_shapes(void) {
          "  -H ^\"cookie: " VAL "^\",",
          VAL, "copy as curl cmd");
   expect("curl -b '" VAL "' https://drive-pc.quark.cn/", VAL, "curl -b");
+  /* The four spellings cURL accepts, and the one the test caught: "--cookie"
+   * was skipped entirely because its second character is not 'b'. */
   expect("curl --cookie '" VAL "' https://drive-pc.quark.cn/", VAL,
          "curl --cookie");
+  expect("curl --cookie='" VAL "' https://drive-pc.quark.cn/", VAL,
+         "curl --cookie=");
+  expect("curl -b'" VAL "' https://drive-pc.quark.cn/", VAL, "curl -b attached");
 
   /* A cURL command where the cookie is not the first header: the scan must not
    * stop at the first thing that resembles a header name. */
