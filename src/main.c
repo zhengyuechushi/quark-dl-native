@@ -149,15 +149,18 @@ main(int argc, char **argv) {
    * this: a single early return used to leave the loader's name in place and
    * made the rename look impossible. */
   syscall(SYS_thr_set_name, -1, PROCESS_NAME);
+#endif
 
   /* From here on every step leaves a line in <data>/boot.log. The case this
    * exists for is the one where nothing happens at all: no process, no
    * notification, no page. The file then says whether the ELF never loaded,
-   * died during init, or is serving somewhere else. */
+   * died during init, or is serving somewhere else. Kept outside __SCE__ so the
+   * Linux build exercises the same trail in CI. */
   boot_reset();
   boot_trace("main 进入, build %s, pid %d", BUILD_ID, (int)getpid());
   boot_watch_signals();
 
+#ifdef __SCE__
   /* One instance per console. A stale copy that moved to the next port would
    * otherwise keep serving an older build, and requests sent to the announced
    * port could land on it instead. Bounded on purpose: if the kernel will not
