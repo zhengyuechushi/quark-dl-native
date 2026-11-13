@@ -98,8 +98,8 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 tls = d.get('net', {}).get('tls', '')
 print('tls =', tls)
-assert 'TLS' in tls, 'TLS layer not reported'
-assert '根证书' in tls, 'root store not loaded'
+assert 'mbedtls' in tls.lower(), 'TLS layer not reported: %r' % tls
+assert '根证书' in tls, 'root store not loaded: %r' % tls
 assert d['dl']['dir'].startswith('/'), 'download dir missing'
 PY
 
