@@ -139,7 +139,28 @@ jobs:
           curl -fsS --compressed -D qr-ct.txt -o qrcode.js "$base/qrcode.js"
           grep -qi "javascript" qr-ct.txt
           grep -q "window.qrCode" qrcode.js
-          curl -fsS --compressed "$base/" | grep -q '/qrcode.js'
+          curl -fsS --compressed "$base/" > index.html
+          grep -q '/qrcode.js' index.html
+
+          # The scan card was reported missing by a user who was looking at a
+          # page the browser had cached from an older build. Both halves are
+          # asserted now: the card is in the page, and the page cannot be cached.
+          echo "--- scan card and cache headers ---"
+          grep -q '<h2>夸克账号</h2>' index.html
+          grep -q 'id="qQr"' index.html
+          grep -q 'var PAGE_V' index.html
+          curl -sS -D index-hdr.txt -o /dev/null "$base/"
+          grep -qi '^cache-control: no-store' index-hdr.txt
+          curl -sS -D diag-hdr.txt -o /dev/null "$base/api/diag?format=json"
+          grep -qi '^cache-control: no-store' diag-hdr.txt
+
+          # The page carries its own version so it can tell a stale copy from a
+          # build that really lacks a feature. If it drifts from the binary the
+          # warning turns into noise, so the drift fails the build.
+          echo "--- page version matches the binary ---"
+          WANT=$(sed -n 's/^APP_VERSION := //p' Makefile | tr -d ' ')
+          grep -qF "var PAGE_V = '$WANT'" index.html || {
+            echo "index.html PAGE_V does not match APP_VERSION=$WANT"; exit 1; }
 
           echo "--- exit ---"
           curl -fsS -X POST "$base/api/exit"

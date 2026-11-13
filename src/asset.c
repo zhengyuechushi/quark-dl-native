@@ -112,6 +112,14 @@ asset_request(struct MHD_Connection *conn, const char* url) {
     if(encoding) {
       MHD_add_response_header(resp, MHD_HTTP_HEADER_CONTENT_ENCODING, encoding);
     }
+    /* Nobody caches this but the browser, and a cached copy is how a user ends
+     * up staring at the previous release and reporting that a card is missing.
+     * The whole bundle is under 200 KB over a LAN, so re-sending it costs
+     * nothing; being wrong about which build is on screen costs a round trip
+     * through CI. */
+    MHD_add_response_header(resp, MHD_HTTP_HEADER_CACHE_CONTROL,
+                            "no-store, must-revalidate");
+    MHD_add_response_header(resp, "Pragma", "no-cache");
     ret = websrv_queue_response(conn, status, resp);
     MHD_destroy_response(resp);
   }

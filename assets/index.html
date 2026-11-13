@@ -18,6 +18,13 @@
   h1 { font-size: 26px; margin: 0; letter-spacing: .5px; }
   .tag { font-size: 12px; color: #7b8794; border: 1px solid #2a3038; border-radius: 999px; padding: 2px 10px; }
   .sub { color: #8b97a5; margin: 0 0 22px; font-size: 13px; }
+  /* Shown only when the page in the browser predates the build on the console. */
+  .stale {
+    display: none; margin: -10px 0 18px; padding: 10px 14px; border-radius: 10px;
+    background: #33230f; border: 1px solid #6b4a17; color: #fbbf24; font-size: 13px;
+    line-height: 1.6;
+  }
+  .stale b { color: #fde68a; }
   .card {
     background: #161a20; border: 1px solid #232a33; border-radius: 14px;
     padding: 18px 20px; margin-bottom: 14px;
@@ -86,6 +93,7 @@
     <span class="tag" id="version">—</span>
   </header>
   <p class="sub"><span class="dot" id="dot"></span><span id="statusText">正在连接…</span></p>
+  <div class="stale" id="stale"></div>
 
   <div class="card">
     <h2>运行状态</h2>
@@ -212,6 +220,16 @@
   var queueBusy = false;
   var dirTouched = false;
 
+  /* This page ships inside the ELF, so it cannot learn its own version from
+   * anywhere else; the console reports the version it is actually running.
+   * Comparing the two is the only way to tell "the card is missing" from
+   * "you are looking at last week's page". Kept in step with APP_VERSION by a
+   * check in CI. */
+  var PAGE_V = '0.4.1';
+  /* In the tab title as well: the tab is what a user looks at when they are
+   * not sure whether they reloaded the right thing. */
+  document.title = 'Quark DL ' + PAGE_V;
+
   function text(id, value) { el(id).textContent = value; }
 
   function fmtUptime(ms) {
@@ -279,6 +297,19 @@
 
     text('version', d.version || '—');
     text('build', (d.build || '—').slice(0, 12));
+
+    /* A stale page is indistinguishable from a broken feature: the user sees
+     * the previous layout and reports that something is not there. Say so
+     * instead of letting them hunt. */
+    if (d.version && d.version !== PAGE_V) {
+      var stale = el('stale');
+      stale.textContent = '你打开的是旧页面（这一份 ' + PAGE_V + '，设备上跑的是 ' +
+        d.version + '）。按 Ctrl+Shift+R 强制刷新，或在地址后面加 ?v=' +
+        d.version + ' 再回车。';
+      stale.style.display = 'block';
+    } else {
+      el('stale').style.display = 'none';
+    }
     text('pid', (d.pid || '—') + ' / ' + (d.ppid || '—'));
     text('port', d.port || '—');
     text('host', d.host || '—');

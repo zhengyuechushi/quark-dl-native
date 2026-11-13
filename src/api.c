@@ -116,6 +116,10 @@ send_body(struct MHD_Connection *conn, unsigned int status, const char *ctype,
     return MHD_NO;
   }
   MHD_add_response_header(resp, MHD_HTTP_HEADER_CONTENT_TYPE, ctype);
+  /* Every one of these answers describes the console right now: how many
+   * downloads are running, which build is loaded, whether the login is still
+   * good. A cached copy is never merely stale, it is a lie. */
+  MHD_add_response_header(resp, MHD_HTTP_HEADER_CACHE_CONTROL, "no-store");
   ret = websrv_queue_response(conn, status, resp);
   MHD_destroy_response(resp);
   return ret;
