@@ -11,13 +11,33 @@
   body {
     margin: 0; min-height: 100vh; background: #0f1115; color: #e8ecf1;
     font: 15px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    display: flex; justify-content: center; padding: 28px 16px 48px;
   }
-  .wrap { width: 100%; max-width: 720px; }
-  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
-  h1 { font-size: 26px; margin: 0; letter-spacing: .5px; }
-  .tag { font-size: 12px; color: #7b8794; border: 1px solid #2a3038; border-radius: 999px; padding: 2px 10px; }
-  .sub { color: #8b97a5; margin: 0 0 22px; font-size: 13px; }
+  /* Left sidebar + right content. The reference layout splits categories into
+   * a fixed rail; on a phone the rail collapses to the top. */
+  .shell { display: flex; min-height: 100vh; }
+  nav {
+    width: 190px; flex: 0 0 auto; background: #13161c; border-right: 1px solid #232a33;
+    padding: 22px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  nav .brand { font-size: 20px; font-weight: 700; letter-spacing: .5px; padding: 0 10px 4px; }
+  nav .brand .ver { display: block; font-size: 11px; color: #6b7683; font-weight: 400; letter-spacing: 0; margin-top: 2px; }
+  nav .nav-item {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    padding: 11px 12px; margin-top: 4px; border-radius: 10px; color: #8b97a5;
+    border: 1px solid transparent; background: transparent; cursor: pointer; font-size: 14px;
+  }
+  nav .nav-item:hover { color: #c9d2dc; background: #1a1f27; }
+  nav .nav-item.active { color: #eaf1ff; background: #1c2430; border-color: #2f3b4d; }
+  nav .nav-item .ic { width: 18px; text-align: center; font-size: 15px; }
+  nav .nav-foot { margin-top: 18px; padding: 12px 10px 0; border-top: 1px solid #232a33; }
+  nav .nav-foot .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4ade80; margin-right: 7px; vertical-align: 1px; }
+  nav .nav-foot .dot.off { background: #f87171; }
+  nav .nav-foot .s { font-size: 12px; color: #6b7683; }
+
+  main { flex: 1; min-width: 0; padding: 28px 28px 60px; }
+  main .pane { max-width: 760px; }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: .5px; }
+  .sub { color: #8b97a5; margin: 0 0 20px; font-size: 13px; }
   /* Shown only when the page in the browser predates the build on the console. */
   .stale {
     display: none; margin: -10px 0 18px; padding: 10px 14px; border-radius: 10px;
@@ -88,137 +108,191 @@
   .qitem .qn { flex: 1; font-size: 14px; word-break: break-all; }
   .qitem .qn.dir { color: #7aa2ff; cursor: pointer; }
   .qitem .qd { color: #6b7683; font-size: 12px; white-space: nowrap; }
+  /* Tab panes: exactly one is visible at a time. */
+  .pane { display: none; }
+  .pane.show { display: block; }
+  /* Log pane: monospace, auto-scroll to the newest line. */
+  .log-box {
+    background: #0d1015; border: 1px solid #232a33; border-radius: 12px;
+    padding: 14px 16px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-all;
+    color: #c9d2dc; max-height: 68vh; overflow-y: auto; margin-top: 4px;
+  }
+  @media (max-width: 640px) {
+    .shell { flex-direction: column; }
+    nav { width: 100%; height: auto; position: static; border-right: 0; border-bottom: 1px solid #232a33; display: flex; flex-wrap: wrap; gap: 6px; padding: 12px; }
+    nav .brand { width: 100%; }
+    nav .nav-item { width: auto; flex: 0 0 auto; margin-top: 0; }
+    nav .nav-foot { display: none; }
+    main { padding: 18px 14px 48px; }
+  }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>Quark DL</h1>
-    <span class="tag" id="version">—</span>
-  </header>
-  <p class="sub"><span class="dot" id="dot"></span><span id="statusText">正在连接…</span></p>
-  <div class="stale" id="stale"></div>
-
-  <div class="card">
-    <h2>运行状态</h2>
-    <div class="row"><span class="k">进程名（进程列表显示）</span><span class="v" id="name">—</span></div>
-    <div class="row"><span class="k">PID / 父进程</span><span class="v" id="pid">—</span></div>
-    <div class="row"><span class="k">端口</span><span class="v" id="port">—</span></div>
-    <div class="row"><span class="k">你连的地址</span><span class="v" id="host">—</span></div>
-    <div class="row"><span class="k">已运行</span><span class="v" id="uptime">—</span></div>
-    <div class="row"><span class="k">构建</span><span class="v" id="build">—</span></div>
-    <div class="row"><span class="k">TLS</span><span class="v" id="tls">—</span></div>
-  </div>
-
-  <div class="card">
-    <h2>网络自检</h2>
-    <p class="note" style="margin-top:0">
-      这台主机能不能真的上网，取决于四件互相独立的事：域名解析、TCP、TLS 握手、证书校验。
-      点一次就知道断在哪一步。默认测的是 pan.quark.cn，也就是后面要拿网盘目录的那个域名。
-    </p>
-    <label class="field">测试地址</label>
-    <input id="probeUrl" value="https://pan.quark.cn/" spellcheck="false">
-    <div class="toolbar">
-      <button id="probe">开始自检</button>
-      <span class="muted" id="probeState"></span>
+<div class="shell">
+  <nav>
+    <div class="brand">Quark DL<span class="ver" id="version">—</span></div>
+    <button class="nav-item active" data-pane="status"><span class="ic">◈</span>状态</button>
+    <button class="nav-item" data-pane="drive"><span class="ic">☁</span>网盘</button>
+    <button class="nav-item" data-pane="dl"><span class="ic">↓</span>直链下载</button>
+    <button class="nav-item" data-pane="log"><span class="ic">≡</span>日志</button>
+    <div class="nav-foot">
+      <span class="dot" id="dot"></span><span class="s" id="statusText">正在连接…</span>
     </div>
-    <div class="result" id="probeOut"></div>
-  </div>
+  </nav>
 
-  <div class="card">
-    <h2>夸克账号</h2>
-    <div class="row"><span class="k">状态</span><span class="v" id="qStateV">未登录</span></div>
-    <div class="qr-box">
-      <canvas id="qrCanvas" width="0" height="0"></canvas>
-      <p class="note" id="qrHint" style="margin:8px 0 0">点下面的「扫码登录」，然后用手机上的夸克 App 扫这个码。</p>
-    </div>
-    <div class="toolbar">
-      <button id="qQr">扫码登录</button>
-      <button id="qLogout" class="small">退出登录</button>
-      <button id="qProbe" class="small">看原始 JSON</button>
-      <span class="muted" id="qMsg"></span>
-    </div>
-    <details class="help">
-      <summary>扫不了码？改用粘贴 Cookie</summary>
-      <p class="note">二维码是夸克官方登录页生成的，手机端扫不上时（网络、版本、摄像头），
-      可以改从电脑浏览器取一次 Cookie，一样能登录。</p>
-      <label class="field">Cookie —— 下面几种粘法都认</label>
-      <textarea id="qCookie" placeholder="&#9312; __pus=…; __puus=…;&#10;&#9313; Cookie: __pus=…; __puus=…&#10;&#9314; 整块请求头&#10;&#9315; curl 'https://drive-pc.quark.cn/…' -H 'cookie: …'" spellcheck="false"></textarea>
-      <div class="toolbar">
-        <button id="qLogin" class="small">用这段 Cookie 登录</button>
-        <span class="muted" id="qCookieMsg"></span>
+  <main>
+    <div class="stale" id="stale"></div>
+
+    <!-- 状态：运行状态 + 网络自检（启动自动跑一次）+ 结束运行 -->
+    <section class="pane show" id="pane-status">
+      <div class="card">
+        <h2>运行状态</h2>
+        <div class="row"><span class="k">进程名（进程列表显示）</span><span class="v" id="name">—</span></div>
+        <div class="row"><span class="k">PID / 父进程</span><span class="v" id="pid">—</span></div>
+        <div class="row"><span class="k">端口</span><span class="v" id="port">—</span></div>
+        <div class="row"><span class="k">你连的地址</span><span class="v" id="host">—</span></div>
+        <div class="row"><span class="k">已运行</span><span class="v" id="uptime">—</span></div>
+        <div class="row"><span class="k">构建</span><span class="v" id="build">—</span></div>
+        <div class="row"><span class="k">TLS</span><span class="v" id="tls">—</span></div>
       </div>
-      <p class="note">先在电脑浏览器登录 <code>pan.quark.cn</code>，按 F12 打开开发者工具，
-      切到 <b>Network</b>，然后按 F5 刷新一次页面。在筛选框里打 <code>clouddrive</code>，
-      点其中一条 <b>Status 是 200</b> 的请求（名字多为 <code>sort</code>、<code>member</code>）。</p>
-      <p class="note"><b>办法一，最省事：</b>右键那条请求 → Copy → <b>Copy as cURL (bash)</b>，
-      整段粘到上面。里面的 <code>-H 'cookie: …'</code> 会被自动揪出来，不用自己找。</p>
-      <p class="note"><b>办法二：</b>在右侧 Headers 面板里找 <code>Cookie:</code> 那一行，复制冒号后面的值。
-      如果面板上写着「Provisional headers are shown」，说明这条请求根本没发出去（或来自缓存），
-      上面就只有 Dnt、Referer 之类，没有 Cookie——换一条请求，或者直接用办法一。</p>
-      <p class="note"><b>办法三：</b>Application（应用）→ Storage → Cookies →
-      <code>https://pan.quark.cn</code>，把 <code>__pus</code>、<code>__puus</code>、<code>__kp</code>、
-      <code>__kps</code>、<code>__uid</code> 这些行按 <code>名字=值; 名字=值</code> 拼起来。
-      HttpOnly 的项在 Application 里照样能看到值，<code>document.cookie</code> 看不到，别在控制台里取。</p>
-      <p class="note">cookie 存在 <code>/data/quark-dl/cookie.txt</code>（权限 600）。
-      它等同于登录凭证，别外传；不想留了在页面上点「退出登录」就会删掉。</p>
-    </details>
-    <div class="result" id="qRaw" style="display:none"></div>
-  </div>
 
-  <div class="card">
-    <h2>网盘</h2>
-    <div class="crumb" id="qCrumb"></div>
-    <div id="qList"><p class="note" style="margin:0">登录后这里会列出网盘根目录。</p></div>
-    <div class="toolbar">
-      <button id="qAdd">加入下载队列</button>
-      <span class="muted" id="qSel">已选 0 项</span>
-    </div>
-    <!-- Where this button reports. It used to reuse the account card's #qMsg,
-         which sits above the QR image and the whole cookie block - so every
-         result ("pick something first", "queued 3", "failed: ...") was printed
-         off-screen and the button looked like it did nothing. -->
-    <p class="note" id="qAddMsg" style="display:none"></p>
-    <p class="note">
-      勾目录会递归整个文件夹（最多 2000 个文件，分 50 个一批换直链）。文件下到上面那个保存目录。
-      这个页面只读网盘，不会移动、改名或删除任何东西。
-    </p>
-  </div>
+      <div class="card">
+        <h2>网络自检</h2>
+        <p class="note" style="margin-top:0">
+          这台主机能不能真的上网，取决于四件互相独立的事：域名解析、TCP、TLS 握手、证书校验。
+          点一次就知道断在哪一步。默认测的是 pan.quark.cn，也就是后面要拿网盘目录的那个域名。
+        </p>
+        <label class="field">测试地址</label>
+        <input id="probeUrl" value="https://pan.quark.cn/" spellcheck="false">
+        <div class="toolbar">
+          <button id="probe">开始自检</button>
+          <span class="muted" id="probeState"></span>
+        </div>
+        <div class="result" id="probeOut"></div>
+      </div>
 
-  <div class="card">
-    <h2>下载</h2>
-    <label class="field">链接（一行一个，支持多选粘贴）</label>
-    <textarea id="urls" placeholder="https://…&#10;https://…" spellcheck="false"></textarea>
-    <label class="field">保存到（绝对路径）</label>
-    <input id="dir" spellcheck="false" placeholder="/data/homebrew">
-    <div class="toolbar">
-      <button id="add">加入下载队列</button>
-      <button id="saveDir" class="small">记住这个目录</button>
-      <button id="clear" class="small">清掉已完成</button>
-      <span class="muted" id="addState"></span>
-    </div>
-    <p class="note">
-      默认保存到 <code id="dirDefault">/data/homebrew</code>，和 ProsperoStore 的安装目录一致。
-      文件先写成 <code>.part</code>，校验落盘后才改名，中断了重新加同一个链接会接着下。
-    </p>
-    <div id="tasks"></div>
-  </div>
+      <div class="card">
+        <h2>结束运行</h2>
+        <button id="exit" class="danger">结束运行（可重新加载）</button>
+        <p class="note">
+          点了之后进程自己退出，不写任何标记文件，也不影响下次加载。这是主机界面那个「终止」按钮对 payload
+          做不到的事。重启用你原来的方式再加载一次 ELF 即可。
+        </p>
+      </div>
+    </section>
 
-  <div class="card">
-    <h2>控制</h2>
-    <button id="exit" class="danger">结束运行（可重新加载）</button>
-    <p class="note">
-      点了之后进程自己退出，不写任何标记文件，也不影响下次加载。这是主机界面那个「终止」按钮对 payload
-      做不到的事。重启用你原来的方式再加载一次 ELF 即可。
-    </p>
-  </div>
+    <!-- 网盘：夸克账号 + 网盘 + 下载位置 + 队列 -->
+    <section class="pane" id="pane-drive">
+      <div class="card">
+        <h2>夸克账号</h2>
+        <div class="row"><span class="k">状态</span><span class="v" id="qStateV">未登录</span></div>
+        <div class="qr-box">
+          <canvas id="qrCanvas" width="0" height="0"></canvas>
+          <p class="note" id="qrHint" style="margin:8px 0 0">点下面的「扫码登录」，然后用手机上的夸克 App 扫这个码。</p>
+        </div>
+        <div class="toolbar">
+          <button id="qQr">扫码登录</button>
+          <button id="qLogout" class="small">退出登录</button>
+          <button id="qProbe" class="small">看原始 JSON</button>
+          <span class="muted" id="qMsg"></span>
+        </div>
+        <details class="help">
+          <summary>扫不了码？改用粘贴 Cookie</summary>
+          <p class="note">二维码是夸克官方登录页生成的，手机端扫不上时（网络、版本、摄像头），
+          可以改从电脑浏览器取一次 Cookie，一样能登录。</p>
+          <label class="field">Cookie —— 下面几种粘法都认</label>
+          <textarea id="qCookie" placeholder="&#9312; __pus=…; __puus=…;&#10;&#9313; Cookie: __pus=…; __puus=…&#10;&#9314; 整块请求头&#10;&#9315; curl 'https://drive-pc.quark.cn/…' -H 'cookie: …'" spellcheck="false"></textarea>
+          <div class="toolbar">
+            <button id="qLogin" class="small">用这段 Cookie 登录</button>
+            <span class="muted" id="qCookieMsg"></span>
+          </div>
+          <p class="note">先在电脑浏览器登录 <code>pan.quark.cn</code>，按 F12 打开开发者工具，
+          切到 <b>Network</b>，然后按 F5 刷新一次页面。在筛选框里打 <code>clouddrive</code>，
+          点其中一条 <b>Status 是 200</b> 的请求（名字多为 <code>sort</code>、<code>member</code>）。</p>
+          <p class="note"><b>办法一，最省事：</b>右键那条请求 → Copy → <b>Copy as cURL (bash)</b>，
+          整段粘到上面。里面的 <code>-H 'cookie: …'</code> 会被自动揪出来，不用自己找。</p>
+          <p class="note"><b>办法二：</b>在右侧 Headers 面板里找 <code>Cookie:</code> 那一行，复制冒号后面的值。
+          如果面板上写着「Provisional headers are shown」，说明这条请求根本没发出去（或来自缓存），
+          上面就只有 Dnt、Referer 之类，没有 Cookie——换一条请求，或者直接用办法一。</p>
+          <p class="note"><b>办法三：</b>Application（应用）→ Storage → Cookies →
+          <code>https://pan.quark.cn</code>，把 <code>__pus</code>、<code>__puus</code>、<code>__kp</code>、
+          <code>__kps</code>、<code>__uid</code> 这些行按 <code>名字=值; 名字=值</code> 拼起来。
+          HttpOnly 的项在 Application 里照样能看到值，<code>document.cookie</code> 看不到，别在控制台里取。</p>
+          <p class="note">cookie 存在 <code>/data/quark-dl/cookie.txt</code>（权限 600）。
+          它等同于登录凭证，别外传；不想留了在页面上点「退出登录」就会删掉。</p>
+        </details>
+        <div class="result" id="qRaw" style="display:none"></div>
+      </div>
 
-  <p class="note">
-    <a href="/api/diag" style="color:#7aa2ff">打开 /api/diag</a>（浏览器里是网页版，脚本仍拿 JSON）·
-    <a href="/api/diag?format=json" style="color:#7aa2ff">JSON</a> ·
-    <a href="/api/diag.txt" style="color:#7aa2ff">纯文本</a> ·
-    <a href="/api/net/selftest" style="color:#7aa2ff">网络自检</a>
-  </p>
+      <div class="card">
+        <h2>网盘</h2>
+        <div class="crumb" id="qCrumb"></div>
+        <div id="qList"><p class="note" style="margin:0">登录后这里会列出网盘根目录。</p></div>
+        <div class="toolbar">
+          <button id="qAdd">加入下载队列</button>
+          <span class="muted" id="qSel">已选 0 项</span>
+        </div>
+        <!-- Where this button reports. It used to reuse the account card's #qMsg,
+             which sits above the QR image and the whole cookie block - so every
+             result ("pick something first", "queued 3", "failed: ...") was printed
+             off-screen and the button looked like it did nothing. -->
+        <p class="note" id="qAddMsg" style="display:none"></p>
+        <p class="note">
+          勾目录会递归整个文件夹（最多 2000 个文件，分 50 个一批换直链）。文件下到上面那个保存目录。
+          这个页面只读网盘，不会移动、改名或删除任何东西。
+        </p>
+      </div>
+
+      <div class="card">
+        <h2>下载位置与队列</h2>
+        <label class="field">保存到（绝对路径）</label>
+        <input id="dir" spellcheck="false" placeholder="/data/homebrew">
+        <div class="toolbar">
+          <button id="saveDir" class="small">记住这个目录</button>
+          <button id="clear" class="small">清掉已完成</button>
+          <span class="muted" id="addState"></span>
+        </div>
+        <p class="note">
+          默认保存到 <code id="dirDefault">/data/homebrew</code>，和 ProsperoStore 的安装目录一致。
+          文件先写成 <code>.part</code>，校验落盘后才改名，中断了重新加同一个链接会接着下。
+        </p>
+        <div id="tasks"></div>
+      </div>
+    </section>
+
+    <!-- 直链下载：原「下载」卡片 -->
+    <section class="pane" id="pane-dl">
+      <div class="card">
+        <h2>直链下载</h2>
+        <label class="field">链接（一行一个，支持多选粘贴）</label>
+        <textarea id="urls" placeholder="https://…&#10;https://…" spellcheck="false"></textarea>
+        <label class="field">保存到（绝对路径）</label>
+        <input id="dir2" spellcheck="false" placeholder="/data/homebrew">
+        <div class="toolbar">
+          <button id="add">加入下载队列</button>
+          <span class="muted" id="addState2"></span>
+        </div>
+        <p class="note">
+          默认保存到 <code id="dirDefault2">/data/homebrew</code>，和 ProsperoStore 的安装目录一致。
+          文件先写成 <code>.part</code>，校验落盘后才改名，中断了重新加同一个链接会接着下。
+        </p>
+      </div>
+    </section>
+
+    <!-- 日志：boot.log -->
+    <section class="pane" id="pane-log">
+      <div class="card">
+        <h2>日志（boot.log）</h2>
+        <div class="toolbar" style="margin-top:0; margin-bottom:10px">
+          <button id="logRefresh" class="small">刷新</button>
+          <button id="logOld" class="small">上一份（boot.log.old）</button>
+          <span class="muted" id="logState"></span>
+        </div>
+        <div class="log-box" id="logBox">正在读取…</div>
+      </div>
+    </section>
+  </main>
 </div>
 
 <script src="/qrcode.js"></script>
@@ -241,7 +315,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.4.9';
+  var PAGE_V = '0.5.0';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -346,8 +420,12 @@
 
     var dflt = (d.dl && d.dl.dir) || '/data/homebrew';
     text('dirDefault', dflt);
+    text('dirDefault2', dflt);
     if (!dirTouched && !el('dir').value) {
       el('dir').value = dflt;
+    }
+    if (!dirTouched && !el('dir2').value) {
+      el('dir2').value = dflt;
     }
 
     el('dot').className = 'dot';
@@ -481,21 +559,22 @@
     });
   };
 
-  el('dir').oninput = function () { dirTouched = true; };
+  el('dir').oninput = function () { dirTouched = true; el('dir2').value = el('dir').value; };
+  el('dir2').oninput = function () { dirTouched = true; el('dir').value = el('dir2').value; };
 
   el('add').onclick = function () {
     var raw = el('urls').value;
-    if (!raw.trim()) { text('addState', '先粘一个链接'); return; }
+    if (!raw.trim()) { text('addState2', '先粘一个链接'); return; }
     var btn = el('add');
     btn.disabled = true;
-    text('addState', '正在加入…');
+    text('addState2', '正在加入…');
     var body = 'url=' + encodeURIComponent(raw) +
-      '&dir=' + encodeURIComponent(el('dir').value.trim());
+      '&dir=' + encodeURIComponent(el('dir2').value.trim());
     json('POST', '/api/dl/add', body, function (err, d) {
       btn.disabled = false;
-      if (err) { text('addState', '失败：' + err.message); return; }
+      if (err) { text('addState2', '失败：' + err.message); return; }
       var bad = (d.errors && d.errors.length) ? d.errors.length : 0;
-      text('addState', d.added + ' 个已加入' + (bad ? '，' + bad + ' 个失败：' + d.errors[0].error : ''));
+      text('addState2', d.added + ' 个已加入' + (bad ? '，' + bad + ' 个失败：' + d.errors[0].error : ''));
       if (d.added) el('urls').value = '';
       pollQueue();
     });
@@ -929,8 +1008,79 @@
     qLoad();
   });
 
+  /* ----- 左侧分类导航 ----- */
+  var navs = document.querySelectorAll('.nav-item');
+  function showPane(name) {
+    var i;
+    for (i = 0; i < navs.length; i++) {
+      navs[i].className = 'nav-item' + (navs[i].getAttribute('data-pane') === name ? ' active' : '');
+    }
+    var panes = document.querySelectorAll('.pane');
+    for (i = 0; i < panes.length; i++) {
+      panes[i].className = 'pane' + (panes[i].id === 'pane-' + name ? ' show' : '');
+    }
+    /* The log pane reads on entry: it is the one view whose content changes
+     * without this page doing anything. */
+    if (name === 'log') pollLog();
+  }
+  for (var ni = 0; ni < navs.length; ni++) {
+    (function (item) {
+      item.onclick = function () { showPane(item.getAttribute('data-pane')); };
+    })(navs[ni]);
+  }
+
+  /* ----- 日志 ----- */
+  var logOld = false;
+  function pollLog() {
+    var box = el('logBox');
+    if (!box) return;
+    json('GET', '/api/log' + (logOld ? '?old=1' : ''), null, function (err, data) {
+      if (err) { box.textContent = '读取日志失败：' + err.message; return; }
+      if (typeof data !== 'string') { box.textContent = '日志接口返回了意外内容'; return; }
+      box.textContent = data;
+      /* Stay pinned to the newest line: the trail grows downward. */
+      box.scrollTop = box.scrollHeight;
+    });
+  }
+  el('logRefresh').onclick = function () { pollLog(); };
+  el('logOld').onclick = function () {
+    logOld = !logOld;
+    var b = el('logOld');
+    b.textContent = logOld ? '当前这份（boot.log）' : '上一份（boot.log.old）';
+    pollLog();
+  };
+
   pollDiag();
   pollQueue();
+
+  /* Network self-test runs automatically on first load, once. The console's
+   * first question is always "can it reach the internet", so answering it
+   * without a click removes a step; the button stays for re-runs. */
+  (function () {
+    var url = el('probeUrl').value.trim() || 'https://pan.quark.cn/';
+    var btn = el('probe');
+    btn.disabled = true;
+    text('probeState', '首次启动，正在自检…');
+    json('GET', '/api/net/selftest?format=json&url=' + encodeURIComponent(url), null, function (err, d) {
+      btn.disabled = false;
+      text('probeState', '');
+      if (err) { el('probeOut').textContent = err.message; return; }
+      var lines = [];
+      lines.push((d.ok ? '✓ ' : '✗ ') + (d.host || '') + (d.ip ? ' → ' + d.ip : '') +
+        (d.resolver ? '（' + d.resolver + '，' + d.dns_ms + ' ms）' : ''));
+      if (d.tls && d.tls !== 'plain') {
+        lines.push('  ' + d.tls);
+        if (d.cert) lines.push('  服务器证书 ' + d.cert + (d.cert_expires ? ' · 到期 ' + d.cert_expires : ''));
+        if (d.cert_issuer) lines.push('  签发者   ' + d.cert_issuer);
+      } else if (d.tls === 'plain') {
+        lines.push('  明文 HTTP（没有 TLS）');
+      }
+      if (d.status) lines.push('  HTTP ' + d.status + ' · ' + d.bytes + ' 字节 · ' + d.total_ms + ' ms');
+      if (d.error) lines.push('  失败于 ' + (d.stage || '?') + '：' + d.error);
+      el('probeOut').textContent = lines.join('\n');
+    });
+  })();
+
   setInterval(pollDiag, 2000);
   setInterval(pollQueue, 2000);
 })();

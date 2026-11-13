@@ -32,7 +32,7 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | `Makefile` 的 `APP_VERSION`（0.4.9）；页面里的 `PAGE_V` 必须与它一致，CI 校验。产物文件名带版本号 `quark-dl_v0.4.9.elf`，Payload Manager 会把它显示成标题 `quark dl` + 版本 `v0.4.9` |
+| 版本 | `Makefile` 的 `APP_VERSION`（0.5.0）；页面里的 `PAGE_V` 必须与它一致，CI 校验。产物文件名带版本号 `quark-dl_v0.5.0.elf`，Payload Manager 会把它显示成标题 `quark dl` + 版本 `v0.5.0` |
 | build id | 见 CI 产物（ELF 里可 `grep` 到完整 sha，用来确认刷进去的是哪一版） |
 | 大小 | 约 850 KB（mbedTLS + 200 KB 根证书库 + 业务层 + 二维码编码器） |
 | CI | `elf` 与 `linux-smoke` 全绿，含 JSON 解析器、Cookie 解析与 Set-Cookie 归并单测、页面行为测试 |
@@ -131,7 +131,7 @@ BUILD_ID=$(git rev-parse HEAD) bash ps5/build.sh     # 需要 Docker
 ```
 
 镜像内做三件事：装 SDK v0.43、交叉编译 libmicrohttpd、交叉编译 mbedTLS 2.28.8。
-产物 `quark-dl_v0.4.9.elf` 约 1 MB（根证书 200 KB + mbedTLS）。
+产物 `quark-dl_v0.5.0.elf` 约 1 MB（根证书 200 KB + mbedTLS）。
 
 主机上跑同一份代码（CI 就是这么测的）：
 

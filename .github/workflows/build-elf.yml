@@ -73,6 +73,9 @@ jobs:
           # The start-up trail. Its absence is how "no process on screen"
           # becomes an unanswerable report.
           grep -aqF "boot.log" "$ELF" || { echo "boot log missing"; exit 1; }
+          # The 日志 tab reads the trail through its own endpoint; without it the
+          # page's fourth tab would show "还没有日志" forever.
+          grep -aqF "/api/log" "$ELF" || { echo "log endpoint missing"; exit 1; }
           echo "ok"
 
       - uses: actions/upload-artifact@v4
@@ -231,6 +234,12 @@ jobs:
           # Smoke has no login, so the queue must say so out loud. A silent
           # "no cookie" is what produced 412s that took a build to diagnose.
           grep -q "下载登录头：没有会话" .smoke-data/boot.log
+
+          # The 日志 tab reads the same trail over HTTP. If the endpoint stops
+          # serving it, the tab shows "还没有日志" and the trail is useless.
+          echo "--- log endpoint serves the trail ---"
+          curl -fsS "$base/api/log" | tee api-log.txt
+          grep -q "ELF 已加载" api-log.txt
 
           # The queue button used to fail silently: the handler wrote no trace,
           # and the page printed its answer into a different card. Both halves

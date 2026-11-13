@@ -23,7 +23,7 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
-APP_VERSION := 0.4.9
+APP_VERSION := 0.5.0
 BUILD_ID    ?= dev
 PYTHON      ?= python3
 STRIP       ?= $(PS5_PAYLOAD_SDK)/bin/prospero-strip
@@ -41,7 +41,7 @@ TLS_LIBS   := -L$(TLS_PREFIX)/lib -lmbedtls -lmbedx509 -lmbedcrypto
 # The version is part of the file name because that is the only place Payload
 # Manager can read it from: for anything imported by hand (USB or upload) it
 # takes the version out of the file name with the same regex its own cards use
-# ("quark-dl_v0.4.9.elf" -> title "quark dl", version "v0.4.9"). A bare
+# ("quark-dl_v0.5.0.elf" -> title "quark dl", version "v0.5.0"). A bare
 # "quark-dl.elf" is listed with no version at all, which is what made this build
 # the only entry on the console's launch list without one.
 BIN       := quark-dl_v$(APP_VERSION).elf

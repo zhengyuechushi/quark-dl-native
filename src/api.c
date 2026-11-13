@@ -53,6 +53,10 @@ static unsigned g_requests;
 static char g_last_request[80];
 static char g_host[72];
 
+/* Where the queue, settings and boot.log live. Defined near api_init below;
+ * api_boot_log (the 日志 endpoint) needs it earlier, so it is declared here. */
+static const char *data_dir(void);
+
 static long
 elapsed_ms(void) {
   struct timespec now;
@@ -375,6 +379,67 @@ api_health(struct MHD_Connection *conn) {
            APP_NAME, APP_VERSION, BUILD_ID, qdl_self_pid(), (unsigned)g_port,
            elapsed_ms(), PROCESS_NAME, g_host[0] ? g_host : "unknown");
   return send_json(conn, MHD_HTTP_OK, body);
+}
+
+/* ------------------------------------------------------------- boot log -- */
+
+/* The start-up trail, served whole so the page can show it in the 日志 tab.
+ * boot.log is the one piece of evidence a user has when something looks wrong
+ * but no error is on screen, so it is read straight off the disk rather than
+ * kept in memory: a copy could lag the file the FTP server sees. */
+static enum MHD_Result
+api_boot_log(struct MHD_Connection *conn) {
+  const char *old_arg =
+      MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "old");
+  char path[320];
+  char *buf = NULL;
+  size_t len = 0;
+  FILE *f;
+
+  /* boot.log.old is the previous generation, written by boot_reset when the
+   * current one passes 120 KB - a crash that only shows in the rotated file is
+   * still worth reading, so it is offered behind ?old=1. */
+  snprintf(path, sizeof(path), "%s/boot.log%s", data_dir(),
+           (old_arg && *old_arg && strcmp(old_arg, "0")) ? ".old" : "");
+
+  f = fopen(path, "rb");
+  if(f) {
+    long sz;
+
+    fseek(f, 0, SEEK_END);
+    sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if(sz > 0) {
+      buf = (char *)malloc((size_t)sz + 1);
+      if(buf) {
+        len = fread(buf, 1, (size_t)sz, f);
+        buf[len] = 0;
+      }
+    }
+    fclose(f);
+  }
+
+  /* A missing or empty file is not an error worth failing over: the tab shows
+   * "还没有日志" instead of a 500. */
+  if(!buf) {
+    return send_body(conn, MHD_HTTP_OK, API_TEXT, "[还没有日志]\n");
+  }
+
+  {
+    struct MHD_Response *resp;
+    enum MHD_Result ret;
+
+    resp = MHD_create_response_from_buffer(len, buf, MHD_RESPMEM_MUST_FREE);
+    if(!resp) {
+      free(buf);
+      return MHD_NO;
+    }
+    MHD_add_response_header(resp, MHD_HTTP_HEADER_CONTENT_TYPE, API_TEXT);
+    MHD_add_response_header(resp, MHD_HTTP_HEADER_CACHE_CONTROL, "no-store");
+    ret = websrv_queue_response(conn, MHD_HTTP_OK, resp);
+    MHD_destroy_response(resp);
+    return ret;
+  }
 }
 
 /* ------------------------------------------------------- stage 2: network -- */
@@ -1595,6 +1660,9 @@ api_request(struct MHD_Connection *conn, const char *url, const char *method,
   }
   if(!strcmp(path, "/api/net/selftest") || !strcmp(path, "/api/net")) {
     return is_get ? api_net_selftest(conn) : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/log")) {
+    return is_get ? api_boot_log(conn) : api_not_found(conn, path);
   }
   if(!strcmp(path, "/api/dl/list")) {
     return is_get ? api_dl_list(conn) : api_not_found(conn, path);

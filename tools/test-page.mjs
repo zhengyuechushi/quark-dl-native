@@ -106,6 +106,35 @@ const document = {
     n.textContent = t;
     return n;
   },
+  /* The page's tab navigation and pane switching query by class. The stub has
+   * no HTML parser, so these return the elements the script binds to rather
+   * than a real selector match. */
+  querySelectorAll: (sel) => {
+    if (sel === '.nav-item') {
+      const out = [];
+      for (const name of ['status', 'drive', 'dl', 'log']) {
+        const n = makeNode('button');
+        n.setAttribute = (k, v) => { n[k] = v; };
+        n.getAttribute = (k) => n[k];
+        n.setAttribute('data-pane', name);
+        n.className = 'nav-item';
+        out.push(n);
+      }
+      return out;
+    }
+    if (sel === '.pane') {
+      const out = [];
+      for (const name of ['status', 'drive', 'dl', 'log']) {
+        const n = makeNode('section');
+        n.id = 'pane-' + name;
+        n.className = 'pane';
+        out.push(n);
+      }
+      return out;
+    }
+    return [];
+  },
+  querySelector: () => null,
 };
 
 /* --------------------------------------------------------- XHR + routes */
