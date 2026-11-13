@@ -473,38 +473,38 @@ http_perform(const http_req *req, http_result *out) {
       return -1;
     }
 
-    rc = app(head, sizeof(head), &used, "%s %s HTTP/1.1\r\n", method, path);
+    rc = app(head, HDR_MAX, &used, "%s %s HTTP/1.1\r\n", method, path);
     if(!rc) {
-      rc = app(head, sizeof(head), &used, "Host: %s\r\n", hosthdr);
+      rc = app(head, HDR_MAX, &used, "Host: %s\r\n", hosthdr);
     }
     if(!rc && req->user_agent && *req->user_agent) {
-      rc = app(head, sizeof(head), &used, "User-Agent: %s\r\n", req->user_agent);
+      rc = app(head, HDR_MAX, &used, "User-Agent: %s\r\n", req->user_agent);
     } else if(!rc) {
-      rc = app(head, sizeof(head), &used, "User-Agent: %s/%s\r\n", APP_NAME,
+      rc = app(head, HDR_MAX, &used, "User-Agent: %s/%s\r\n", APP_NAME,
                APP_VERSION);
     }
     if(!rc) {
-      rc = app(head, sizeof(head), &used, "Accept: */*\r\n");
+      rc = app(head, HDR_MAX, &used, "Accept: */*\r\n");
     }
     if(!rc) {
-      rc = app(head, sizeof(head), &used, "Accept-Encoding: identity\r\n");
+      rc = app(head, HDR_MAX, &used, "Accept-Encoding: identity\r\n");
     }
     if(!rc) {
-      rc = app(head, sizeof(head), &used, "Connection: close\r\n");
+      rc = app(head, HDR_MAX, &used, "Connection: close\r\n");
     }
     if(!rc && req->range_from > 0) {
-      rc = app(head, sizeof(head), &used, "Range: bytes=%lld-\r\n",
+      rc = app(head, HDR_MAX, &used, "Range: bytes=%lld-\r\n",
                req->range_from);
     }
     if(!rc && req->body_len > 0) {
-      rc = app(head, sizeof(head), &used, "Content-Length: %lu\r\n",
+      rc = app(head, HDR_MAX, &used, "Content-Length: %lu\r\n",
                (unsigned long)req->body_len);
     }
     if(!rc && req->extra_headers && *req->extra_headers) {
-      rc = app(head, sizeof(head), &used, "%s", req->extra_headers);
+      rc = app(head, HDR_MAX, &used, "%s", req->extra_headers);
     }
     if(!rc) {
-      rc = app(head, sizeof(head), &used, "\r\n");
+      rc = app(head, HDR_MAX, &used, "\r\n");
     }
     if(rc) {
       net_close(c);
