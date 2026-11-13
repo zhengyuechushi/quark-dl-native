@@ -130,6 +130,13 @@ assert d['ok'] is False, d
 msg = d.get('error', '')
 print('rejected as expected:', msg[:100])
 assert '证书' in msg or 'certificate' in msg.lower(), msg
+assert '0x' in msg, 'the flag bits are missing from the report: %s' % msg
+assert '信任库' in msg, 'the untrusted-CA bit was not named: %s' % msg
+# The whole point of reading the verdict after the handshake: a refused
+# certificate can still be named, which is what tells a wrong clock apart from
+# something answering in the server's place.
+assert 'localhost' in d.get('cert', ''), d
+print('refused certificate was', d['cert'], 'issued by', d.get('cert_issuer', ''))
 PY
 
 # ------------------------------------------------------------ downloads ----

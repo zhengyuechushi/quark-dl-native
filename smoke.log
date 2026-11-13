@@ -1,0 +1,562 @@
+﻿2026-11-13T14:32:33.8590712Z Current runner version: '2.338.2'
+2026-11-13T14:32:33.8636798Z ##[group]Runner Image Provisioner
+2026-11-13T14:32:33.8637533Z Hosted Compute Agent
+2026-11-13T14:32:33.8638145Z Version: 20261103.629
+2026-11-13T14:32:33.8638706Z Commit: 15dbd9ccb5dbf34fae002b6ed1a2670f52df37bc
+2026-11-13T14:32:33.8639376Z Build Date: 2026-11-03T17:26:59Z
+2026-11-13T14:32:33.8640035Z Worker ID: {5d885fc2-af60-45f7-9473-4eee1cac0ecb}
+2026-11-13T14:32:33.8640688Z Region: centralus
+2026-11-13T14:32:33.8641209Z Cloud: Azure
+2026-11-13T14:32:33.8641690Z ##[endgroup]
+2026-11-13T14:32:33.8643019Z ##[group]Operating System
+2026-11-13T14:32:33.8643638Z Ubuntu
+2026-11-13T14:32:33.8644079Z 24.04.5
+2026-11-13T14:32:33.8664881Z LTS
+2026-11-13T14:32:33.8665463Z ##[endgroup]
+2026-11-13T14:32:33.8665991Z ##[group]Runner Image
+2026-11-13T14:32:33.8666637Z Image: ubuntu-24.04
+2026-11-13T14:32:33.8667123Z Version: 20261111.370.1
+2026-11-13T14:32:33.8668335Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261111.370/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-13T14:32:33.8669757Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261111.370
+2026-11-13T14:32:33.8670686Z ##[endgroup]
+2026-11-13T14:32:33.8671696Z ##[group]GITHUB_TOKEN Permissions
+2026-11-13T14:32:33.8674262Z Contents: read
+2026-11-13T14:32:33.8675014Z Metadata: read
+2026-11-13T14:32:33.8675479Z Packages: read
+2026-11-13T14:32:33.8676050Z ##[endgroup]
+2026-11-13T14:32:33.8678265Z Secret source: Actions
+2026-11-13T14:32:33.8679170Z Cache mode: write
+2026-11-13T14:32:33.8680015Z Prepare workflow directory
+2026-11-13T14:32:33.9048320Z Prepare all required actions
+2026-11-13T14:32:33.9089372Z Getting action download info
+2026-11-13T14:32:34.1323400Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-13T14:32:34.3127824Z Complete job name: linux-smoke
+2026-11-13T14:32:34.3841425Z ##[group]Run actions/checkout@v4
+2026-11-13T14:32:34.3842956Z with:
+2026-11-13T14:32:34.3843235Z   repository: zhengyuechushi/quark-dl-native
+2026-11-13T14:32:34.3848518Z   token: ***
+2026-11-13T14:32:34.3848763Z   ssh-strict: true
+2026-11-13T14:32:34.3849014Z   ssh-user: git
+2026-11-13T14:32:34.3849269Z   persist-credentials: true
+2026-11-13T14:32:34.3849568Z   clean: true
+2026-11-13T14:32:34.3849833Z   sparse-checkout-cone-mode: true
+2026-11-13T14:32:34.3850148Z   fetch-depth: 1
+2026-11-13T14:32:34.3850396Z   fetch-tags: false
+2026-11-13T14:32:34.3850669Z   show-progress: true
+2026-11-13T14:32:34.3850924Z   lfs: false
+2026-11-13T14:32:34.3851161Z   submodules: false
+2026-11-13T14:32:34.3851418Z   set-safe-directory: true
+2026-11-13T14:32:34.3851726Z   allow-unsafe-pr-checkout: false
+2026-11-13T14:32:34.3854115Z ##[endgroup]
+2026-11-13T14:32:34.6613526Z Syncing repository: zhengyuechushi/quark-dl-native
+2026-11-13T14:32:34.6615853Z ##[group]Getting Git version info
+2026-11-13T14:32:34.6616746Z Working directory is '/home/runner/work/quark-dl-native/quark-dl-native'
+2026-11-13T14:32:34.6617795Z [command]/usr/bin/git version
+2026-11-13T14:32:34.6751339Z git version 2.56.1
+2026-11-13T14:32:34.6757498Z ##[endgroup]
+2026-11-13T14:32:34.6767388Z Temporarily overriding HOME='/home/runner/work/_temp/d2313412-e961-4a70-ae1e-a6fc1123adf4' before making global git config changes
+2026-11-13T14:32:34.6782998Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-13T14:32:34.6784519Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/quark-dl-native/quark-dl-native
+2026-11-13T14:32:34.6865316Z Deleting the contents of '/home/runner/work/quark-dl-native/quark-dl-native'
+2026-11-13T14:32:34.6939013Z ##[group]Initializing the repository
+2026-11-13T14:32:34.6940234Z [command]/usr/bin/git init /home/runner/work/quark-dl-native/quark-dl-native
+2026-11-13T14:32:34.7096841Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-13T14:32:34.7100717Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-13T14:32:34.7101987Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-13T14:32:34.7102828Z hint: call:
+2026-11-13T14:32:34.7103304Z hint:
+2026-11-13T14:32:34.7103855Z hint: 	git config --global init.defaultBranch <name>
+2026-11-13T14:32:34.7104619Z hint:
+2026-11-13T14:32:34.7105234Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-13T14:32:34.7106159Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-13T14:32:34.7106984Z hint:
+2026-11-13T14:32:34.7107454Z hint: 	git branch -m <name>
+2026-11-13T14:32:34.7107976Z hint:
+2026-11-13T14:32:34.7108639Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-13T14:32:34.7110717Z Initialized empty Git repository in /home/runner/work/quark-dl-native/quark-dl-native/.git/
+2026-11-13T14:32:34.7125632Z [command]/usr/bin/git remote add origin https://github.com/zhengyuechushi/quark-dl-native
+2026-11-13T14:32:34.7256010Z ##[endgroup]
+2026-11-13T14:32:34.7257271Z ##[group]Disabling automatic garbage collection
+2026-11-13T14:32:34.7258087Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-13T14:32:34.7269127Z ##[endgroup]
+2026-11-13T14:32:34.7269941Z ##[group]Setting up auth
+2026-11-13T14:32:34.7295615Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-13T14:32:34.7299395Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-13T14:32:34.7659417Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-13T14:32:34.7686848Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-13T14:32:34.7898252Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-13T14:32:34.7939824Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-13T14:32:34.8144283Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-13T14:32:34.8191158Z ##[endgroup]
+2026-11-13T14:32:34.8192337Z ##[group]Fetching the repository
+2026-11-13T14:32:34.8200645Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +b5ed7e8b49de45c44c7130481318f17d3fbe9d0e:refs/remotes/origin/main
+2026-11-13T14:32:35.3229896Z From https://github.com/zhengyuechushi/quark-dl-native
+2026-11-13T14:32:35.3235618Z  * [new ref]         b5ed7e8b49de45c44c7130481318f17d3fbe9d0e -> origin/main
+2026-11-13T14:32:35.3249029Z ##[endgroup]
+2026-11-13T14:32:35.3250299Z ##[group]Determining the checkout info
+2026-11-13T14:32:35.3251613Z ##[endgroup]
+2026-11-13T14:32:35.3252294Z [command]/usr/bin/git sparse-checkout disable
+2026-11-13T14:32:35.3254167Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-13T14:32:35.3256980Z ##[group]Checking out the ref
+2026-11-13T14:32:35.3258282Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-11-13T14:32:35.3264802Z Switched to a new branch 'main'
+2026-11-13T14:32:35.3271370Z branch 'main' set up to track 'origin/main'.
+2026-11-13T14:32:35.3278768Z ##[endgroup]
+2026-11-13T14:32:35.3323284Z [command]/usr/bin/git log -1 --format=%H
+2026-11-13T14:32:35.3353587Z b5ed7e8b49de45c44c7130481318f17d3fbe9d0e
+2026-11-13T14:32:35.3580984Z ##[group]Run sudo apt-get update
+2026-11-13T14:32:35.3581914Z [36;1msudo apt-get update[0m
+2026-11-13T14:32:35.3582846Z [36;1msudo apt-get install -y libmicrohttpd-dev openssl[0m
+2026-11-13T14:32:35.3602712Z shell: /usr/bin/bash -e {0}
+2026-11-13T14:32:35.3603443Z ##[endgroup]
+2026-11-13T14:32:35.4491017Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+2026-11-13T14:32:35.4998171Z Get:6 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+2026-11-13T14:32:35.5136347Z Hit:2 http://azure.archive.ubuntu.com/ubuntu noble InRelease
+2026-11-13T14:32:35.5161577Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+2026-11-13T14:32:35.5180563Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+2026-11-13T14:32:35.5368633Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+2026-11-13T14:32:35.5820023Z Get:7 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [697 kB]
+2026-11-13T14:32:35.6052019Z Get:8 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [767 kB]
+2026-11-13T14:32:35.6772129Z Get:9 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1450 kB]
+2026-11-13T14:32:35.6840745Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [315 kB]
+2026-11-13T14:32:35.7087745Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1713 kB]
+2026-11-13T14:32:35.7091079Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble-updates/universe Translation-en [345 kB]
+2026-11-13T14:32:35.7094004Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1883 kB]
+2026-11-13T14:32:35.7339846Z Get:14 http://azure.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [430 kB]
+2026-11-13T14:32:35.7342519Z Get:15 http://azure.archive.ubuntu.com/ubuntu noble-updates/multiverse Translation-en [14.6 kB]
+2026-11-13T14:32:35.8992521Z Get:16 http://azure.archive.ubuntu.com/ubuntu noble-security/main amd64 Packages [1195 kB]
+2026-11-13T14:32:35.8997399Z Get:17 http://azure.archive.ubuntu.com/ubuntu noble-security/main Translation-en [238 kB]
+2026-11-13T14:32:35.9014962Z Get:18 http://azure.archive.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1228 kB]
+2026-11-13T14:32:35.9486128Z Get:19 http://azure.archive.ubuntu.com/ubuntu noble-security/universe Translation-en [248 kB]
+2026-11-13T14:32:35.9488235Z Get:20 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1788 kB]
+2026-11-13T14:32:35.9564667Z Get:21 http://azure.archive.ubuntu.com/ubuntu noble-security/restricted Translation-en [411 kB]
+2026-11-13T14:32:40.8781442Z Fetched 13.1 MB in 1s (10.2 MB/s)
+2026-11-13T14:32:41.6152240Z Reading package lists...
+2026-11-13T14:32:41.6498407Z Reading package lists...
+2026-11-13T14:32:41.8465455Z Building dependency tree...
+2026-11-13T14:32:41.8471993Z Reading state information...
+2026-11-13T14:32:41.9606817Z openssl is already the newest version (3.0.13-0ubuntu3.16).
+2026-11-13T14:32:41.9607604Z The following additional packages will be installed:
+2026-11-13T14:32:41.9608581Z   libevent-2.1-7t64 libgnutls-dane0t64 libgnutls-openssl27t64 libgnutls28-dev
+2026-11-13T14:32:41.9612027Z   libidn2-dev libmicrohttpd12t64 libp11-kit-dev libtasn1-6-dev libtasn1-doc
+2026-11-13T14:32:41.9612647Z   libunbound8 nettle-dev
+2026-11-13T14:32:41.9619743Z Suggested packages:
+2026-11-13T14:32:41.9620334Z   dns-root-data gnutls-bin gnutls-doc p11-kit-doc
+2026-11-13T14:32:41.9821714Z The following NEW packages will be installed:
+2026-11-13T14:32:41.9822478Z   libevent-2.1-7t64 libgnutls-dane0t64 libgnutls-openssl27t64 libgnutls28-dev
+2026-11-13T14:32:41.9823397Z   libidn2-dev libmicrohttpd-dev libmicrohttpd12t64 libp11-kit-dev
+2026-11-13T14:32:41.9824297Z   libtasn1-6-dev libtasn1-doc libunbound8 nettle-dev
+2026-11-13T14:32:41.9996638Z 0 upgraded, 12 newly installed, 0 to remove and 20 not upgraded.
+2026-11-13T14:32:41.9999419Z Need to get 3806 kB of archives.
+2026-11-13T14:32:41.9999886Z After this operation, 12.2 MB of additional disk space will be used.
+2026-11-13T14:32:42.0000356Z Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [144 B]
+2026-11-13T14:32:42.1595217Z Get:2 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libevent-2.1-7t64 amd64 2.1.12-stable-9ubuntu2.2 [146 kB]
+2026-11-13T14:32:42.2558279Z Get:3 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libunbound8 amd64 1.19.2-1ubuntu3.12 [450 kB]
+2026-11-13T14:32:42.3473199Z Get:4 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libgnutls-dane0t64 amd64 3.8.3-1.1ubuntu3.6 [23.5 kB]
+2026-11-13T14:32:42.3829246Z Get:5 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libgnutls-openssl27t64 amd64 3.8.3-1.1ubuntu3.6 [23.8 kB]
+2026-11-13T14:32:42.4149035Z Get:6 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libidn2-dev amd64 2.3.7-2build1.1 [121 kB]
+2026-11-13T14:32:42.4473812Z Get:7 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libp11-kit-dev amd64 0.25.3-4ubuntu2.2 [22.7 kB]
+2026-11-13T14:32:42.4797047Z Get:8 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libtasn1-6-dev amd64 4.19.0-3ubuntu0.24.04.2 [90.8 kB]
+2026-11-13T14:32:42.5087666Z Get:9 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 nettle-dev amd64 3.9.1-2.2build1.1 [1154 kB]
+2026-11-13T14:32:42.5454295Z Get:10 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libgnutls28-dev amd64 3.8.3-1.1ubuntu3.6 [1058 kB]
+2026-11-13T14:32:42.5947523Z Get:11 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 libmicrohttpd12t64 amd64 1.0.0-2.1ubuntu2 [107 kB]
+2026-11-13T14:32:42.6310055Z Get:12 http://azure.archive.ubuntu.com/ubuntu noble/universe amd64 libmicrohttpd-dev amd64 1.0.0-2.1ubuntu2 [292 kB]
+2026-11-13T14:32:42.6701382Z Get:13 http://azure.archive.ubuntu.com/ubuntu noble-updates/main amd64 libtasn1-doc all 4.19.0-3ubuntu0.24.04.2 [318 kB]
+2026-11-13T14:32:42.8942322Z Fetched 3806 kB in 1s (5557 kB/s)
+2026-11-13T14:32:42.9177312Z Selecting previously unselected package libevent-2.1-7t64:amd64.
+2026-11-13T14:32:42.9437495Z (Reading database ... 
+2026-11-13T14:32:42.9438208Z (Reading database ... 5%
+2026-11-13T14:32:42.9438682Z (Reading database ... 10%
+2026-11-13T14:32:42.9438991Z (Reading database ... 15%
+2026-11-13T14:32:42.9439186Z (Reading database ... 20%
+2026-11-13T14:32:42.9439443Z (Reading database ... 25%
+2026-11-13T14:32:42.9439676Z (Reading database ... 30%
+2026-11-13T14:32:42.9439867Z (Reading database ... 35%
+2026-11-13T14:32:42.9440056Z (Reading database ... 40%
+2026-11-13T14:32:42.9440247Z (Reading database ... 45%
+2026-11-13T14:32:42.9440438Z (Reading database ... 50%
+2026-11-13T14:32:42.9488679Z (Reading database ... 55%
+2026-11-13T14:32:43.0544636Z (Reading database ... 60%
+2026-11-13T14:32:43.2582245Z (Reading database ... 65%
+2026-11-13T14:32:43.4611863Z (Reading database ... 70%
+2026-11-13T14:32:43.6507369Z (Reading database ... 75%
+2026-11-13T14:32:43.7199544Z (Reading database ... 80%
+2026-11-13T14:32:43.8569975Z (Reading database ... 85%
+2026-11-13T14:32:43.9570087Z (Reading database ... 90%
+2026-11-13T14:32:44.0650125Z (Reading database ... 95%
+2026-11-13T14:32:44.0650924Z (Reading database ... 100%
+2026-11-13T14:32:44.0680252Z (Reading database ... 216752 files and directories currently installed.)
+2026-11-13T14:32:44.0688626Z Preparing to unpack .../00-libevent-2.1-7t64_2.1.12-stable-9ubuntu2.2_amd64.deb ...
+2026-11-13T14:32:44.0757960Z Unpacking libevent-2.1-7t64:amd64 (2.1.12-stable-9ubuntu2.2) ...
+2026-11-13T14:32:44.1005274Z Selecting previously unselected package libunbound8:amd64.
+2026-11-13T14:32:44.1110556Z Preparing to unpack .../01-libunbound8_1.19.2-1ubuntu3.12_amd64.deb ...
+2026-11-13T14:32:44.1118328Z Unpacking libunbound8:amd64 (1.19.2-1ubuntu3.12) ...
+2026-11-13T14:32:44.1405815Z Selecting previously unselected package libgnutls-dane0t64:amd64.
+2026-11-13T14:32:44.1517773Z Preparing to unpack .../02-libgnutls-dane0t64_3.8.3-1.1ubuntu3.6_amd64.deb ...
+2026-11-13T14:32:44.1535454Z Unpacking libgnutls-dane0t64:amd64 (3.8.3-1.1ubuntu3.6) ...
+2026-11-13T14:32:44.1755107Z Selecting previously unselected package libgnutls-openssl27t64:amd64.
+2026-11-13T14:32:44.1869275Z Preparing to unpack .../03-libgnutls-openssl27t64_3.8.3-1.1ubuntu3.6_amd64.deb ...
+2026-11-13T14:32:44.1887267Z Unpacking libgnutls-openssl27t64:amd64 (3.8.3-1.1ubuntu3.6) ...
+2026-11-13T14:32:44.2109014Z Selecting previously unselected package libidn2-dev:amd64.
+2026-11-13T14:32:44.2221091Z Preparing to unpack .../04-libidn2-dev_2.3.7-2build1.1_amd64.deb ...
+2026-11-13T14:32:44.2235290Z Unpacking libidn2-dev:amd64 (2.3.7-2build1.1) ...
+2026-11-13T14:32:44.2635785Z Selecting previously unselected package libp11-kit-dev:amd64.
+2026-11-13T14:32:44.2653656Z Preparing to unpack .../05-libp11-kit-dev_0.25.3-4ubuntu2.2_amd64.deb ...
+2026-11-13T14:32:44.2672947Z Unpacking libp11-kit-dev:amd64 (0.25.3-4ubuntu2.2) ...
+2026-11-13T14:32:44.2926402Z Selecting previously unselected package libtasn1-6-dev:amd64.
+2026-11-13T14:32:44.3004014Z Preparing to unpack .../06-libtasn1-6-dev_4.19.0-3ubuntu0.24.04.2_amd64.deb ...
+2026-11-13T14:32:44.3011726Z Unpacking libtasn1-6-dev:amd64 (4.19.0-3ubuntu0.24.04.2) ...
+2026-11-13T14:32:44.3295930Z Selecting previously unselected package nettle-dev:amd64.
+2026-11-13T14:32:44.3412947Z Preparing to unpack .../07-nettle-dev_3.9.1-2.2build1.1_amd64.deb ...
+2026-11-13T14:32:44.3430955Z Unpacking nettle-dev:amd64 (3.9.1-2.2build1.1) ...
+2026-11-13T14:32:44.4065737Z Selecting previously unselected package libgnutls28-dev:amd64.
+2026-11-13T14:32:44.4168702Z Preparing to unpack .../08-libgnutls28-dev_3.8.3-1.1ubuntu3.6_amd64.deb ...
+2026-11-13T14:32:44.4174231Z Unpacking libgnutls28-dev:amd64 (3.8.3-1.1ubuntu3.6) ...
+2026-11-13T14:32:44.4985576Z Selecting previously unselected package libmicrohttpd12t64:amd64.
+2026-11-13T14:32:44.5077991Z Preparing to unpack .../09-libmicrohttpd12t64_1.0.0-2.1ubuntu2_amd64.deb ...
+2026-11-13T14:32:44.5084209Z Unpacking libmicrohttpd12t64:amd64 (1.0.0-2.1ubuntu2) ...
+2026-11-13T14:32:44.5290884Z Selecting previously unselected package libmicrohttpd-dev:amd64.
+2026-11-13T14:32:44.5399322Z Preparing to unpack .../10-libmicrohttpd-dev_1.0.0-2.1ubuntu2_amd64.deb ...
+2026-11-13T14:32:44.5405966Z Unpacking libmicrohttpd-dev:amd64 (1.0.0-2.1ubuntu2) ...
+2026-11-13T14:32:44.5644766Z Selecting previously unselected package libtasn1-doc.
+2026-11-13T14:32:44.5753245Z Preparing to unpack .../11-libtasn1-doc_4.19.0-3ubuntu0.24.04.2_all.deb ...
+2026-11-13T14:32:44.5759624Z Unpacking libtasn1-doc (4.19.0-3ubuntu0.24.04.2) ...
+2026-11-13T14:32:44.6264898Z Setting up libgnutls-openssl27t64:amd64 (3.8.3-1.1ubuntu3.6) ...
+2026-11-13T14:32:44.6297894Z Setting up nettle-dev:amd64 (3.9.1-2.2build1.1) ...
+2026-11-13T14:32:44.6317450Z Setting up libtasn1-doc (4.19.0-3ubuntu0.24.04.2) ...
+2026-11-13T14:32:44.6336091Z Setting up libevent-2.1-7t64:amd64 (2.1.12-stable-9ubuntu2.2) ...
+2026-11-13T14:32:44.6353347Z Setting up libunbound8:amd64 (1.19.2-1ubuntu3.12) ...
+2026-11-13T14:32:44.6414264Z Setting up libgnutls-dane0t64:amd64 (3.8.3-1.1ubuntu3.6) ...
+2026-11-13T14:32:44.6432947Z Setting up libidn2-dev:amd64 (2.3.7-2build1.1) ...
+2026-11-13T14:32:44.6449042Z Setting up libmicrohttpd12t64:amd64 (1.0.0-2.1ubuntu2) ...
+2026-11-13T14:32:44.6465852Z Setting up libtasn1-6-dev:amd64 (4.19.0-3ubuntu0.24.04.2) ...
+2026-11-13T14:32:44.6514932Z Setting up libp11-kit-dev:amd64 (0.25.3-4ubuntu2.2) ...
+2026-11-13T14:32:44.6532397Z Setting up libgnutls28-dev:amd64 (3.8.3-1.1ubuntu3.6) ...
+2026-11-13T14:32:44.6547929Z Setting up libmicrohttpd-dev:amd64 (1.0.0-2.1ubuntu2) ...
+2026-11-13T14:32:44.6611102Z Processing triggers for libc-bin (2.39-0ubuntu8.9) ...
+2026-11-13T14:32:44.8539240Z Processing triggers for man-db (2.12.0-4build2) ...
+2026-11-13T14:32:44.8562191Z Not building database; man-db/auto-update is not 'true'.
+2026-11-13T14:32:44.8573491Z Processing triggers for install-info (7.1-3build2) ...
+2026-11-13T14:32:45.6470171Z 
+2026-11-13T14:32:45.6470798Z Running kernel seems to be up-to-date.
+2026-11-13T14:32:45.6472537Z 
+2026-11-13T14:32:45.6472635Z No services need to be restarted.
+2026-11-13T14:32:45.6472792Z 
+2026-11-13T14:32:45.6472884Z No containers need to be restarted.
+2026-11-13T14:32:45.6473029Z 
+2026-11-13T14:32:45.6473133Z No user sessions are running outdated binaries.
+2026-11-13T14:32:45.6473305Z 
+2026-11-13T14:32:45.6473479Z No VM guests are running outdated hypervisor (qemu) binaries on this host.
+2026-11-13T14:32:46.5219144Z ##[group]Run MBEDTLS_PREFIX="$HOME/mbedtls" MBEDTLS_CC=cc MBEDTLS_AR=ar \
+2026-11-13T14:32:46.5219453Z [36;1mMBEDTLS_PREFIX="$HOME/mbedtls" MBEDTLS_CC=cc MBEDTLS_AR=ar \[0m
+2026-11-13T14:32:46.5219685Z [36;1m  MBEDTLS_RANLIB=ranlib bash install-mbedtls.sh[0m
+2026-11-13T14:32:46.5219871Z [36;1mls -l "$HOME/mbedtls/lib"[0m
+2026-11-13T14:32:46.5236848Z shell: /usr/bin/bash -e {0}
+2026-11-13T14:32:46.5236987Z ##[endgroup]
+2026-11-13T14:32:46.5303271Z fetching mbedTLS 2.28.8
+2026-11-13T14:32:47.4601130Z building with cc (2 jobs)
+2026-11-13T14:32:47.4644552Z make: Entering directory '/tmp/mbedtls-build/mbedtls-2.28.8'
+2026-11-13T14:32:47.4654152Z make[1]: Entering directory '/tmp/mbedtls-build/mbedtls-2.28.8/library'
+2026-11-13T14:32:47.4675280Z   CC    aes.c
+2026-11-13T14:32:47.4678340Z   CC    aesni.c
+2026-11-13T14:32:47.6287613Z   CC    arc4.c
+2026-11-13T14:32:47.6908848Z   CC    aria.c
+2026-11-13T14:32:47.7119660Z   CC    asn1parse.c
+2026-11-13T14:32:47.8055572Z   CC    asn1write.c
+2026-11-13T14:32:47.8615264Z   CC    base64.c
+2026-11-13T14:32:47.9018212Z   CC    bignum.c
+2026-11-13T14:32:47.9405376Z   CC    blowfish.c
+2026-11-13T14:32:48.0195614Z   CC    camellia.c
+2026-11-13T14:32:48.2075225Z   CC    ccm.c
+2026-11-13T14:32:48.3028136Z   CC    chacha20.c
+2026-11-13T14:32:48.3775289Z   CC    chachapoly.c
+2026-11-13T14:32:48.3985350Z   CC    cipher.c
+2026-11-13T14:32:48.4481362Z   CC    cipher_wrap.c
+2026-11-13T14:32:48.5385530Z   CC    cmac.c
+2026-11-13T14:32:48.5535441Z   CC    constant_time.c
+2026-11-13T14:32:48.5641469Z   CC    ctr_drbg.c
+2026-11-13T14:32:48.6715503Z   CC    des.c
+2026-11-13T14:32:48.6744983Z   CC    dhm.c
+2026-11-13T14:32:48.7735501Z   CC    ecdh.c
+2026-11-13T14:32:48.8322304Z   CC    ecdsa.c
+2026-11-13T14:32:48.8695597Z   CC    ecjpake.c
+2026-11-13T14:32:48.8834866Z   CC    ecp.c
+2026-11-13T14:32:48.9255293Z   CC    ecp_curves.c
+2026-11-13T14:32:49.1908077Z   CC    entropy.c
+2026-11-13T14:32:49.2655442Z   CC    entropy_poll.c
+2026-11-13T14:32:49.2787736Z   CC    error.c
+2026-11-13T14:32:49.3160712Z   CC    gcm.c
+2026-11-13T14:32:49.3657444Z   CC    havege.c
+2026-11-13T14:32:49.3796777Z   CC    hkdf.c
+2026-11-13T14:32:49.4237333Z   CC    hmac_drbg.c
+2026-11-13T14:32:49.4665493Z   CC    md.c
+2026-11-13T14:32:49.5180291Z   CC    md2.c
+2026-11-13T14:32:49.5335264Z   CC    md4.c
+2026-11-13T14:32:49.5475150Z   CC    md5.c
+2026-11-13T14:32:49.5705280Z   CC    memory_buffer_alloc.c
+2026-11-13T14:32:49.5835048Z   CC    mps_reader.c
+2026-11-13T14:32:49.5975039Z   CC    mps_trace.c
+2026-11-13T14:32:49.6094984Z   CC    nist_kw.c
+2026-11-13T14:32:49.6242955Z   CC    oid.c
+2026-11-13T14:32:49.6725516Z   CC    padlock.c
+2026-11-13T14:32:49.6885120Z   CC    pem.c
+2026-11-13T14:32:49.7283387Z   CC    pk.c
+2026-11-13T14:32:49.7895730Z   CC    pk_wrap.c
+2026-11-13T14:32:49.7970577Z   CC    pkcs12.c
+2026-11-13T14:32:49.8795559Z   CC    pkcs5.c
+2026-11-13T14:32:49.8903765Z   CC    pkparse.c
+2026-11-13T14:32:49.9665939Z   CC    pkwrite.c
+2026-11-13T14:32:50.0585924Z   CC    platform.c
+2026-11-13T14:32:50.0641375Z   CC    platform_util.c
+2026-11-13T14:32:50.0895738Z   CC    poly1305.c
+2026-11-13T14:32:50.0955204Z   CC    psa_crypto.c
+2026-11-13T14:32:50.1845592Z   CC    psa_crypto_aead.c
+2026-11-13T14:32:50.2591162Z   CC    psa_crypto_cipher.c
+2026-11-13T14:32:50.3525593Z   CC    psa_crypto_client.c
+2026-11-13T14:32:50.3976432Z   CC    psa_crypto_driver_wrappers.c
+2026-11-13T14:32:50.4861927Z   CC    psa_crypto_ecp.c
+2026-11-13T14:32:50.5756581Z   CC    psa_crypto_hash.c
+2026-11-13T14:32:50.6435440Z   CC    psa_crypto_mac.c
+2026-11-13T14:32:50.7732776Z   CC    psa_crypto_rsa.c
+2026-11-13T14:32:50.7855341Z   CC    psa_crypto_se.c
+2026-11-13T14:32:50.7985341Z   CC    psa_crypto_slot_management.c
+2026-11-13T14:32:50.8853365Z   CC    psa_crypto_storage.c
+2026-11-13T14:32:50.8868286Z   CC    psa_its_file.c
+2026-11-13T14:32:50.9477245Z   CC    ripemd160.c
+2026-11-13T14:32:50.9605311Z   CC    rsa.c
+2026-11-13T14:32:51.1669340Z   CC    rsa_internal.c
+2026-11-13T14:32:51.2475408Z   CC    sha1.c
+2026-11-13T14:32:51.2925447Z   CC    sha256.c
+2026-11-13T14:32:51.4553715Z   CC    sha512.c
+2026-11-13T14:32:51.4841327Z   CC    threading.c
+2026-11-13T14:32:51.5005458Z   CC    timing.c
+2026-11-13T14:32:51.5824673Z   CC    version.c
+2026-11-13T14:32:51.6095381Z   CC    version_features.c
+2026-11-13T14:32:51.6245419Z   CC    xtea.c
+2026-11-13T14:32:51.6355217Z   CC    ../3rdparty/everest/library/everest.c
+2026-11-13T14:32:51.6650180Z   CC    ../3rdparty/everest/library/x25519.c
+2026-11-13T14:32:51.6827916Z   CC    ../3rdparty/everest/library/Hacl_Curve25519_joined.c
+2026-11-13T14:32:51.6915395Z   CC    certs.c
+2026-11-13T14:32:51.6995478Z   CC    pkcs11.c
+2026-11-13T14:32:51.7133348Z   CC    x509.c
+2026-11-13T14:32:51.7155223Z   CC    x509_create.c
+2026-11-13T14:32:51.7895428Z   CC    x509_crl.c
+2026-11-13T14:32:51.8971803Z   CC    x509_crt.c
+2026-11-13T14:32:51.9000884Z   CC    x509_csr.c
+2026-11-13T14:32:51.9948302Z   CC    x509write_crt.c
+2026-11-13T14:32:52.1008884Z   CC    x509write_csr.c
+2026-11-13T14:32:52.1696869Z   CC    debug.c
+2026-11-13T14:32:52.2796878Z   CC    net_sockets.c
+2026-11-13T14:32:52.2887246Z   CC    ssl_cache.c
+2026-11-13T14:32:52.3769519Z   CC    ssl_ciphersuites.c
+2026-11-13T14:32:52.4055619Z   CC    ssl_cli.c
+2026-11-13T14:32:52.4356143Z   CC    ssl_cookie.c
+2026-11-13T14:32:52.5017349Z   CC    ssl_msg.c
+2026-11-13T14:32:52.7969891Z   CC    ssl_srv.c
+2026-11-13T14:32:53.0776944Z   CC    ssl_ticket.c
+2026-11-13T14:32:53.1546228Z   CC    ssl_tls.c
+2026-11-13T14:32:53.2503952Z   CC    ssl_tls13_keys.c
+2026-11-13T14:32:53.2522098Z   AR    libmbedcrypto.a
+2026-11-13T14:32:53.6315740Z   AR    libmbedx509.a
+2026-11-13T14:32:54.0615789Z   AR    libmbedtls.a
+2026-11-13T14:32:54.1038086Z make[1]: Leaving directory '/tmp/mbedtls-build/mbedtls-2.28.8/library'
+2026-11-13T14:32:54.1039482Z make: Leaving directory '/tmp/mbedtls-build/mbedtls-2.28.8'
+2026-11-13T14:32:54.1116275Z mbedTLS 2.28.8 installed in /home/runner/mbedtls
+2026-11-13T14:32:54.1132401Z total 1264
+2026-11-13T14:32:54.1133085Z -rw-r--r-- 1 runner runner 818106 Nov 13 14:32 libmbedcrypto.a
+2026-11-13T14:32:54.1133540Z -rw-r--r-- 1 runner runner 308042 Nov 13 14:32 libmbedtls.a
+2026-11-13T14:32:54.1133868Z -rw-r--r-- 1 runner runner 163016 Nov 13 14:32 libmbedx509.a
+2026-11-13T14:32:54.1163076Z ##[group]Run make linux BUILD_ID=smoke TLS_PREFIX="$HOME/mbedtls"
+2026-11-13T14:32:54.1163353Z [36;1mmake linux BUILD_ID=smoke TLS_PREFIX="$HOME/mbedtls"[0m
+2026-11-13T14:32:54.1180762Z shell: /usr/bin/bash -e {0}
+2026-11-13T14:32:54.1180920Z ##[endgroup]
+2026-11-13T14:32:54.1268527Z mkdir -p gen
+2026-11-13T14:32:54.1279671Z python3 gen-asset-module.py --path index.html assets/index.html > gen/index.html.c
+2026-11-13T14:32:54.1580212Z python3 gen-asset-module.py --path param.json assets/param.json > gen/param.json.c
+2026-11-13T14:32:54.1870751Z python3 gen-ca-module.py assets/ca.pem -o gen/ca_bundle.c
+2026-11-13T14:32:54.2140863Z assets/ca.pem: 118 certificates
+2026-11-13T14:32:54.2190121Z cc -O1 -g -Wall -Werror -Wno-format-truncation -Isrc -DAPP_VERSION=\"0.2.1\" -DBUILD_ID=\"smoke\" `pkg-config libmicrohttpd --cflags` -I/home/runner/mbedtls/include -DQDL_TLS -o quark-dl-linux src/main.c src/websrv.c src/api.c src/kern.c src/asset.c src/notify.c src/net.c src/httpc.c src/dl.c gen/index.html.c gen/param.json.c gen/ca_bundle.c `pkg-config libmicrohttpd --libs` -pthread -L/home/runner/mbedtls/lib -lmbedtls -lmbedx509 -lmbedcrypto
+2026-11-13T14:32:54.9872727Z ##[group]Run set -e
+2026-11-13T14:32:54.9872935Z [36;1mset -e[0m
+2026-11-13T14:32:54.9873084Z [36;1mPORT=8765[0m
+2026-11-13T14:32:54.9873272Z [36;1mbase="http://127.0.0.1:$PORT"[0m
+2026-11-13T14:32:54.9873530Z [36;1mQDL_DATA_DIR="$PWD/.smoke-data" QDL_DEFAULT_DIR="$PWD/.smoke-dl" \[0m
+2026-11-13T14:32:54.9873772Z [36;1m  ./quark-dl-linux > server.log 2>&1 &[0m
+2026-11-13T14:32:54.9873937Z [36;1mPID=$![0m
+2026-11-13T14:32:54.9874058Z [36;1mfor i in $(seq 1 30); do[0m
+2026-11-13T14:32:54.9874255Z [36;1m  if curl -fsS "$base/api/health" > /dev/null 2>&1; then break; fi[0m
+2026-11-13T14:32:54.9875206Z [36;1m  sleep 0.5[0m
+2026-11-13T14:32:54.9875338Z [36;1mdone[0m
+2026-11-13T14:32:54.9875447Z [36;1m[0m
+2026-11-13T14:32:54.9875566Z [36;1mecho "--- health ---"[0m
+2026-11-13T14:32:54.9875737Z [36;1mcurl -fsS "$base/api/health" | tee health.json[0m
+2026-11-13T14:32:54.9875910Z [36;1mecho[0m
+2026-11-13T14:32:54.9876066Z [36;1mgrep -q '"ok":true' health.json[0m
+2026-11-13T14:32:54.9876236Z [36;1mgrep -q '"build":"smoke"' health.json[0m
+2026-11-13T14:32:54.9876420Z [36;1mgrep -q '"port":8765' health.json[0m
+2026-11-13T14:32:54.9876593Z [36;1m[0m
+2026-11-13T14:32:54.9876750Z [36;1mecho "--- diag as json (what scripts get) ---"[0m
+2026-11-13T14:32:54.9876980Z [36;1mcurl -fsS "$base/api/diag?format=json" | tee diag.json[0m
+2026-11-13T14:32:54.9877167Z [36;1mecho[0m
+2026-11-13T14:32:54.9877312Z [36;1mgrep -q '"expected":"quark-dl.elf"' diag.json[0m
+2026-11-13T14:32:54.9877492Z [36;1mgrep -q '"port":8765' diag.json[0m
+2026-11-13T14:32:54.9877660Z [36;1mgrep -q '"host":"127.0.0.1:8765"' diag.json[0m
+2026-11-13T14:32:54.9877842Z [36;1mgrep -q '"tls":"mbedtls' diag.json[0m
+2026-11-13T14:32:54.9878039Z [36;1mcurl -sS -D ct-json.txt -o /dev/null "$base/api/diag"[0m
+2026-11-13T14:32:54.9878276Z [36;1mgrep -qi '^content-type: application/json' ct-json.txt[0m
+2026-11-13T14:32:54.9878489Z [36;1m[0m
+2026-11-13T14:32:54.9878694Z [36;1m# The console run had this exact split: the page worked, typing the URL[0m
+2026-11-13T14:32:54.9878966Z [36;1m# did not. Content type and path normalisation are what differ.[0m
+2026-11-13T14:32:54.9879210Z [36;1mecho "--- diag as a page (what a browser gets) ---"[0m
+2026-11-13T14:32:54.9879445Z [36;1mcurl -fsS -H 'Accept: text/html' "$base/api/diag" > diag.html[0m
+2026-11-13T14:32:54.9879715Z [36;1mcurl -sS -D ct-html.txt -o /dev/null -H 'Accept: text/html' "$base/api/diag"[0m
+2026-11-13T14:32:54.9879974Z [36;1mgrep -qi '^content-type: text/html' ct-html.txt[0m
+2026-11-13T14:32:54.9880167Z [36;1mgrep -q '<title>Quark DL' diag.html[0m
+2026-11-13T14:32:54.9880347Z [36;1mgrep -q 'quark-dl.elf' diag.html[0m
+2026-11-13T14:32:54.9880518Z [36;1m[0m
+2026-11-13T14:32:54.9880707Z [36;1mecho "--- diag keeps working with a query or a trailing slash ---"[0m
+2026-11-13T14:32:54.9880958Z [36;1mcurl -fsS "$base/api/diag?x=1" > /dev/null[0m
+2026-11-13T14:32:54.9881144Z [36;1mcurl -fsS "$base/api/diag/" > /dev/null[0m
+2026-11-13T14:32:54.9881410Z [36;1mcurl -fsS -H 'Accept: text/html' "$base/api/diag?format=json" | head -c 20 | grep -q '{'[0m
+2026-11-13T14:32:54.9881649Z [36;1m[0m
+2026-11-13T14:32:54.9881773Z [36;1mecho "--- diag as plain text ---"[0m
+2026-11-13T14:32:54.9881955Z [36;1mcurl -fsS "$base/api/diag.txt" | tee diag.txt[0m
+2026-11-13T14:32:54.9882137Z [36;1mgrep -q 'quark-dl.elf' diag.txt[0m
+2026-11-13T14:32:54.9882282Z [36;1m[0m
+2026-11-13T14:32:54.9882433Z [36;1mecho "--- unknown endpoint is a 404, not a hang ---"[0m
+2026-11-13T14:32:54.9882735Z [36;1mcode=$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/nope")[0m
+2026-11-13T14:32:54.9882972Z [36;1mecho "status $code"[0m
+2026-11-13T14:32:54.9883115Z [36;1mtest "$code" = 404[0m
+2026-11-13T14:32:54.9883243Z [36;1m[0m
+2026-11-13T14:32:54.9883356Z [36;1mecho "--- index ---"[0m
+2026-11-13T14:32:54.9883501Z [36;1mcurl -fsS "$base/" | head -c 120[0m
+2026-11-13T14:32:54.9883645Z [36;1mecho[0m
+2026-11-13T14:32:54.9883753Z [36;1m[0m
+2026-11-13T14:32:54.9884000Z [36;1mecho "--- exit ---"[0m
+2026-11-13T14:32:54.9884154Z [36;1mcurl -fsS -X POST "$base/api/exit"[0m
+2026-11-13T14:32:54.9884305Z [36;1mecho[0m
+2026-11-13T14:32:54.9884643Z [36;1m[0m
+2026-11-13T14:32:54.9884755Z [36;1mfor i in $(seq 1 20); do[0m
+2026-11-13T14:32:54.9884960Z [36;1m  if ! kill -0 "$PID" 2>/dev/null; then echo "process exited"; exit 0; fi[0m
+2026-11-13T14:32:54.9885168Z [36;1m  sleep 0.5[0m
+2026-11-13T14:32:54.9885291Z [36;1mdone[0m
+2026-11-13T14:32:54.9885429Z [36;1mecho "process did not exit after /api/exit"[0m
+2026-11-13T14:32:54.9885626Z [36;1mcat server.log[0m
+2026-11-13T14:32:54.9885908Z [36;1mexit 1[0m
+2026-11-13T14:32:54.9902916Z shell: /usr/bin/bash -e {0}
+2026-11-13T14:32:54.9903082Z ##[endgroup]
+2026-11-13T14:32:55.0043444Z --- health ---
+2026-11-13T14:32:55.0140231Z {"ok":true,"app":"quark-dl","version":"0.2.1","build":"smoke","pid":3103,"port":8765,"uptime_ms":14,"name":"quark-dl.elf","host":"127.0.0.1:8765"}
+2026-11-13T14:32:55.0183742Z --- diag as json (what scripts get) ---
+2026-11-13T14:32:55.0281241Z {"app":"quark-dl","version":"0.2.1","build":"smoke","pid":3103,"ppid":3102,"port":8765,"uptime_ms":27,"name":{"expected":"quark-dl.elf","kernel":"quark-dl.elf","readable":true,"ok":true,"instances":1},"host":"127.0.0.1:8765","requests":3,"last_request":"GET /api/diag","exiting":false,"net":{"tls":"mbedtls, 118 个根证书","resolver":"-"},"dl":{"running":0,"tasks":0,"dir":"/home/runner/work/quark-dl-native/quark-dl-native/.smoke-dl"}}
+2026-11-13T14:32:55.0422530Z --- diag as a page (what a browser gets) ---
+2026-11-13T14:32:55.0615657Z --- diag keeps working with a query or a trailing slash ---
+2026-11-13T14:32:55.0885599Z --- diag as plain text ---
+2026-11-13T14:32:55.0956547Z app       quark-dl 0.2.1
+2026-11-13T14:32:55.0957213Z build     smoke
+2026-11-13T14:32:55.0957694Z pid       3103 (parent 3102)
+2026-11-13T14:32:55.0958099Z port      8765
+2026-11-13T14:32:55.0958422Z host      127.0.0.1:8765
+2026-11-13T14:32:55.0958951Z name      quark-dl.elf  (expected quark-dl.elf)
+2026-11-13T14:32:55.0959533Z instances 1
+2026-11-13T14:32:55.0959852Z uptime    96 ms
+2026-11-13T14:32:55.0960195Z requests  10, last GET /api/diag.txt
+2026-11-13T14:32:55.0960564Z exiting   no
+2026-11-13T14:32:55.0961183Z tls       mbedtls, 118 个根证书
+2026-11-13T14:32:55.0961524Z resolver  -
+2026-11-13T14:32:55.0961985Z downloads 0 running, 0 known -> /home/runner/work/quark-dl-native/quark-dl-native/.smoke-dl
+2026-11-13T14:32:55.0985273Z --- unknown endpoint is a 404, not a hang ---
+2026-11-13T14:32:55.1058577Z status 404
+2026-11-13T14:32:55.1075121Z --- index ---
+2026-11-13T14:32:55.1152730Z �     �<�sՖ��W\�Ҟ@�3!	��Vԧ��<�v˵���;�6=��{H�|VW @(�AD�ɪ�)BB�j�L�L~�_�s��}��g�>�����s�=_��s;�?�Yew�NI
+2026-11-13T14:32:55.1163699Z --- exit ---
+2026-11-13T14:32:55.1224007Z {"ok":true,"exit":"pending","in_ms":250}
+2026-11-13T14:32:55.6260689Z process exited
+2026-11-13T14:32:55.6302026Z ##[group]Run bash tools/test-stage2.sh
+2026-11-13T14:32:55.6302230Z [36;1mbash tools/test-stage2.sh[0m
+2026-11-13T14:32:55.6318282Z shell: /usr/bin/bash -e {0}
+2026-11-13T14:32:55.6318427Z ##[endgroup]
+2026-11-13T14:32:55.6393039Z 
+2026-11-13T14:32:55.6393477Z === create two CAs: one the payload trusts, one it must reject ===
+2026-11-13T14:32:56.0321932Z 
+2026-11-13T14:32:56.0322776Z === start mock servers ===
+2026-11-13T14:32:56.3282264Z 
+2026-11-13T14:32:56.3283374Z === start quark-dl ===
+2026-11-13T14:32:56.3454247Z 
+2026-11-13T14:32:56.3469408Z === diag reports the TLS layer and the root store ===
+2026-11-13T14:32:56.3665760Z tls = mbedtls, 118 个根证书（含附加证书）
+2026-11-13T14:32:56.3694573Z 
+2026-11-13T14:32:56.3695217Z === self-test over https, trusting only the generated CA ===
+2026-11-13T14:32:56.3821320Z {"ok":true,"url":"https://localhost:9443/echo","host":"localhost","ip":"127.0.0.1","resolver":"getaddrinfo","dns_ms":0,"tls":"TLSv1.2 / TLS-ECDHE-RSA-WITH-AES-256-GCM-SHA384","cert":"CN=localhost","cert_issuer":"CN=good test CA","cert_expires":"2026-11-15","status":200,"bytes":104,"connect_ms":2,"total_ms":4,"stage":"done","error":""}
+2026-11-13T14:32:56.3957422Z https ok, certificate = CN=localhost
+2026-11-13T14:32:56.3985712Z 
+2026-11-13T14:32:56.3986202Z === self-test rejects a certificate signed by an unknown CA ===
+2026-11-13T14:32:56.4091994Z {"ok":false,"url":"https://localhost:9444/echo","host":"localhost","ip":"127.0.0.1","resolver":"getaddrinfo","dns_ms":0,"tls":"TLSv1.2 / 未协商","cert":"","cert_issuer":"","cert_expires":"","status":0,"bytes":0,"connect_ms":1,"total_ms":1,"stage":"connect","error":"证书校验失败 [0x00000008]: 签发它的 CA 不在信任库里"}
+2026-11-13T14:32:56.4224814Z rejected as expected: 证书校验失败 [0x00000008]: 签发它的 CA 不在信任库里
+2026-11-13T14:32:56.4253470Z 
+2026-11-13T14:32:56.4253890Z === download 300000 bytes over plain http ===
+2026-11-13T14:32:56.4797657Z {"ok":true,"added":1,"ids":[1],"errors":[]}
+2026-11-13T14:32:56.5652387Z file ok: 300000 bytes
+2026-11-13T14:32:56.5655078Z 
+2026-11-13T14:32:56.5655304Z === resume: a pre-seeded .part must produce a Range request ===
+2026-11-13T14:32:57.7927499Z resumed from byte 120000 and matched byte for byte
+2026-11-13T14:32:57.7928292Z 
+2026-11-13T14:32:57.7928596Z === chunked body with no Content-Length ===
+2026-11-13T14:32:57.9255372Z 
+2026-11-13T14:32:57.9257740Z === an expired link is reported, not retried forever ===
+2026-11-13T14:32:58.0635389Z reported: HTTP 404：链接无效或已过期
+2026-11-13T14:32:58.0745024Z 
+2026-11-13T14:32:58.0746072Z === download over TLS ===
+2026-11-13T14:32:58.2105995Z tls download ok: 70000 bytes
+2026-11-13T14:32:58.2106728Z 
+2026-11-13T14:32:58.2107036Z === re-adding a finished URL does not download it twice ===
+2026-11-13T14:32:58.2379693Z same task id returned
+2026-11-13T14:32:58.2380201Z 
+2026-11-13T14:32:58.2380518Z === re-adding a link whose file was deleted downloads it again ===
+2026-11-13T14:32:58.2927446Z exists=false for the deleted file, so the page can offer a re-download
+2026-11-13T14:32:58.3143563Z {"ok":true,"added":1,"ids":[1],"errors":[]}
+2026-11-13T14:32:58.3990675Z downloaded again: 300000 bytes
+2026-11-13T14:32:58.3991513Z 
+2026-11-13T14:32:58.3991845Z === the retry endpoint requeues a finished task ===
+2026-11-13T14:32:58.4093636Z {"ok":true,"queued":1}
+2026-11-13T14:32:58.4883810Z retried and failed again, as it must for a 404
+2026-11-13T14:32:58.4884626Z 
+2026-11-13T14:32:58.4885271Z === the queue is written to disk ===
+2026-11-13T14:32:58.4917974Z persisted 5 task(s)
+2026-11-13T14:32:58.4940121Z 
+2026-11-13T14:32:58.4952938Z all stage-2 checks passed
+2026-11-13T14:32:58.4956485Z --- server log ---
+2026-11-13T14:32:58.4969975Z quark-dl.elf
+2026-11-13T14:32:58.4970360Z build: smoke
+2026-11-13T14:32:58.4977363Z listening on port 8765
+2026-11-13T14:32:58.4978043Z --- mock log (tail) ---
+2026-11-13T14:32:58.4991990Z mockdl listening on 9444 (tls=True)
+2026-11-13T14:32:58.4992432Z mockdl listening on 9101 (tls=False)
+2026-11-13T14:32:58.4992830Z mockdl listening on 9443 (tls=True)
+2026-11-13T14:32:58.4993607Z 127.0.0.1 "GET /echo HTTP/1.1" 200 -
+2026-11-13T14:32:58.4993967Z 127.0.0.1 "GET /echo HTTP/1.1" 200 -
+2026-11-13T14:32:58.4994309Z 127.0.0.1 "GET /echo HTTP/1.1" 200 -
+2026-11-13T14:32:58.4994980Z 127.0.0.1 "GET /file?size=300000 HTTP/1.1" 200 -
+2026-11-13T14:32:58.4995394Z RANGE /slow bytes=120000-
+2026-11-13T14:32:58.4995749Z 127.0.0.1 "GET /slow?size=300000 HTTP/1.1" 206 -
+2026-11-13T14:32:58.4996134Z 127.0.0.1 "GET /chunked?size=90000 HTTP/1.1" 200 -
+2026-11-13T14:32:58.4996515Z 127.0.0.1 "GET /missing HTTP/1.1" 404 -
+2026-11-13T14:32:58.4996876Z 127.0.0.1 "GET /file?size=70000 HTTP/1.1" 200 -
+2026-11-13T14:32:58.4997264Z 127.0.0.1 "GET /file?size=300000 HTTP/1.1" 200 -
+2026-11-13T14:32:58.4997649Z 127.0.0.1 "GET /missing HTTP/1.1" 404 -
+2026-11-13T14:32:58.5108581Z Post job cleanup.
+2026-11-13T14:32:58.5845337Z [command]/usr/bin/git version
+2026-11-13T14:32:58.5934907Z git version 2.56.1
+2026-11-13T14:32:58.6025829Z Temporarily overriding HOME='/home/runner/work/_temp/0986ea26-3986-48f0-bfc6-4816d0144440' before making global git config changes
+2026-11-13T14:32:58.6026717Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-13T14:32:58.6027508Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/quark-dl-native/quark-dl-native
+2026-11-13T14:32:58.6028968Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-13T14:32:58.6108800Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-13T14:32:58.6555554Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-13T14:32:58.6595642Z http.https://github.com/.extraheader
+2026-11-13T14:32:58.6631214Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-11-13T14:32:58.6703488Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-13T14:32:58.6964141Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-13T14:32:58.7010324Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-13T14:32:58.7554916Z Cleaning up orphan processes
+2026-11-13T14:32:58.7822613Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

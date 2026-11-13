@@ -239,7 +239,18 @@ tls_start(net_conn *c, const char *host, char *err, size_t cap) {
     tls_error(err, cap, "TLS 配置失败", rc);
     return -1;
   }
-  mbedtls_ssl_conf_authmode(&c->tls.cfg, MBEDTLS_SSL_VERIFY_REQUIRED);
+  /* Verification is still required, but the verdict is read one line later than
+   * mbedTLS would hand it over. With VERIFY_REQUIRED a refused certificate
+   * tears the session down on the spot — the peer certificate is freed and the
+   * session zeroed — so the caller is left with "certificate error" and no way
+   * to say whose certificate it was. That single fact is what separates a wrong
+   * console clock from a proxy answering in the server's place.
+   *
+   * Nothing is ever sent over a connection whose flags are not clean:
+   * http_perform writes its request only after net_dial returns, and net_dial
+   * refuses to return a connection that failed the check below. The handshake
+   * itself carries no user data, only the host name we asked for anyway. */
+  mbedtls_ssl_conf_authmode(&c->tls.cfg, MBEDTLS_SSL_VERIFY_OPTIONAL);
   mbedtls_ssl_conf_ca_chain(&c->tls.cfg, &g_ca, NULL);
   mbedtls_ssl_conf_rng(&c->tls.cfg, mbedtls_ctr_drbg_random, &c->tls.drbg);
   if((rc = mbedtls_ssl_setup(&c->tls.ssl, &c->tls.cfg)) != 0) {
@@ -255,25 +266,22 @@ tls_start(net_conn *c, const char *host, char *err, size_t cap) {
     if(rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
       continue;
     }
-    /* A verification failure is the one error worth spelling out: it is what a
-     * console with a wrong clock or a missing root looks like. */
-    if(rc == MBEDTLS_ERR_X509_CERT_VERIFY_FAILED) {
-      uint32_t flags = mbedtls_ssl_get_verify_result(&c->tls.ssl);
-      char why[200];
-
-      /* Capture what the server actually presented before unwinding: after this
-       * return the caller only has a sentence, and "which certificate" is the
-       * one thing that separates a wrong clock from an intercepting proxy. */
-      tls_describe(c);
-      verify_reasons(flags, why, sizeof(why));
-      snprintf(err, cap, "证书校验失败 [0x%08lx]: %s", (unsigned long)flags, why);
-      return -1;
-    }
     tls_error(err, cap, "TLS 握手失败", rc);
     return -1;
   }
   c->tls.started = 1;
   tls_describe(c);
+  {
+    uint32_t flags = mbedtls_ssl_get_verify_result(&c->tls.ssl);
+
+    if(flags != 0) {
+      char why[200];
+
+      verify_reasons(flags, why, sizeof(why));
+      snprintf(err, cap, "证书校验失败 [0x%08lx]: %s", (unsigned long)flags, why);
+      return -1;
+    }
+  }
   return 0;
 }
 
