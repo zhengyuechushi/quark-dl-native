@@ -129,6 +129,22 @@ jobs:
           grep -q "dl_set_cookie" src/dl.c
           echo ok
 
+      # The download endpoint keys its size limit on the User-Agent: a request
+      # with the web UA is refused with 23018 "download file size limit" the
+      # moment a file is big enough, while the desktop client UA is let through.
+      # The direct-link calls must therefore ask call() for the client UA; a
+      # regression back to the web UA would silently cap the user at small files
+      # exactly like the 4 GB report this guards against.
+      - name: Direct-link fetch uses the client UA
+        run: |
+          set -e
+          # call() gains a client_ua flag and the two direct-link call sites
+          # (quark_direct and dl_fetch) must pass 1 as its final argument.
+          grep -q "int client_ua" src/quark.c
+          n=$(grep -c 'errcap, 1)' src/quark.c)
+          test "$n" = "2"
+          echo ok
+
       # The page ships inside the ELF, so what it does is invisible until it is
       # on a console - and "I picked a file, pressed the button, nothing
       # happened" is exactly the report that blind spot produces. This runs the

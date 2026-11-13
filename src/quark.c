@@ -685,10 +685,17 @@ quark_qr_poll(const char *token, quark_session *s, char *err, size_t errcap) {
 
 /* Runs one request against the API host. `body` non-NULL makes it a POST with
  * a JSON content type. The answer is left in out (caller frees), and the head
- * of it is kept in g_raw for error reporting. */
+ * of it is kept in g_raw for error reporting.
+ *
+ * `client_ua` sends the desktop client's User-Agent instead of the web one.
+ * The download endpoint keys its size limit on the UA: the web client is only
+ * allowed small files and answers a 4 GB file with 23018 "download file size
+ * limit", while the desktop UA (quark-cloud-drive + Channel/pckk_other_ch) is
+ * the one the working client ships and is let through. The direct-link calls
+ * pass 1; listing, member and probe stay on the web UA they were verified on. */
 static int
 call(const quark_session *s, const char *method, const char *path,
-     const char *body, char **out, char *err, size_t errcap) {
+     const char *body, char **out, char *err, size_t errcap, int client_ua) {
   char url[1600];
   /* 7 KB of Cookie header, same reasoning as the session above. */
   static char headers[QUARK_COOKIE_MAX + 640];
@@ -725,7 +732,7 @@ call(const quark_session *s, const char *method, const char *path,
   req.url = url;
   req.method = method;
   req.extra_headers = headers;
-  req.user_agent = QUARK_UA;
+  req.user_agent = client_ua ? QUARK_DL_UA : QUARK_UA;
   req.body = body;
   req.body_len = body ? strlen(body) : 0;
   req.timeout_ms = 20000;
@@ -832,7 +839,7 @@ quark_probe(const quark_session *s, const char *path, char *out, size_t cap,
              QUARK_COMMON);
     return -1;
   }
-  if(call(s, "GET", path, NULL, &body, err, errcap)) {
+  if(call(s, "GET", path, NULL, &body, err, errcap, 0)) {
     /* Nothing is written to out on failure: the caller has to escape the error
      * and the raw body before putting them in a JSON string, and doing it here
      * would mean a second escaper in this file. A response body full of quotes
@@ -892,7 +899,7 @@ quark_whoami(quark_session *s, char *err, size_t cap) {
   char perr[160];
   const char *nick;
 
-  if(call(s, "GET", "/1/clouddrive/member?" QUARK_COMMON, NULL, &body, err, cap)) {
+  if(call(s, "GET", "/1/clouddrive/member?" QUARK_COMMON, NULL, &body, err, cap, 0)) {
     return -1;
   }
   root = json_parse(body, perr, sizeof(perr));
@@ -945,7 +952,7 @@ quark_list(const quark_session *s, const char *pdir, int page, int size,
            "/1/clouddrive/file/sort?%s&pdir_fid=%s&_page=%d&_size=%d"
            "&_fetch_total=1&_sort=file_type:asc,updated_at:desc",
            QUARK_COMMON, pdir, page, size);
-  if(call(s, "GET", path, NULL, &body, err, errcap)) {
+  if(call(s, "GET", path, NULL, &body, err, errcap, 0)) {
     return -1;
   }
   root = json_parse(body, perr, sizeof(perr));
@@ -1029,7 +1036,7 @@ quark_direct(const quark_session *s, const char *fid, char *url, size_t cap,
   /* GET is refused with 405 by the service, so this must be a POST with a JSON
    * body even though it reads like a query. */
   if(call(s, "POST", "/1/clouddrive/file/download?" QUARK_COMMON, body, &resp,
-          err, errcap)) {
+          err, errcap, 1)) {
     return -1;
   }
   root = json_parse(resp, perr, sizeof(perr));
@@ -1116,7 +1123,7 @@ dl_fetch(const quark_session *s, const char *const *fids, int n,
     before = fnv1a(g_dl_cookie);
     g_dl_capture = 1;
     rc = call(s, "POST", "/1/clouddrive/file/download?" QUARK_COMMON, body,
-              &resp, err, errcap);
+              &resp, err, errcap, 1);
     g_dl_capture = 0;
     if(rc) {
       free(body);
