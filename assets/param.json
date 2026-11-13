@@ -1,0 +1,17 @@
+{
+  "applicationCategoryType": 65536,
+  "titleId": "QDLK88888",
+  "deeplinkUri": "http://127.0.0.1:8888/",
+  "localizedParameters": {
+    "defaultLanguage": "zh-Hans",
+    "en-US": {
+      "titleName": "Quark DL"
+    },
+    "zh-Hans": {
+      "titleName": "夸克网盘下载"
+    },
+    "zh-Hant": {
+      "titleName": "夸克網盤下載"
+    }
+  }
+}

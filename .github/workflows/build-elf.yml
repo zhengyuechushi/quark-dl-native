@@ -1,0 +1,36 @@
+name: build-elf
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  elf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build PS5 ELF in Docker
+        env:
+          BUILD_ID: ${{ github.sha }}
+        run: bash ps5/build.sh
+
+      - name: Verify ELF shape
+        run: |
+          set -e
+          test -s quark-dl.elf
+          ls -l quark-dl.elf
+          readelf -h quark-dl.elf | head -20
+          readelf -h quark-dl.elf | grep -q 'Type:.*DYN' || { echo "not a PIE"; exit 1; }
+          if readelf -l quark-dl.elf | grep -q INTERP; then echo "has INTERP"; exit 1; fi
+          grep -aqF "${{ github.sha }}" quark-dl.elf || { echo "build id missing"; exit 1; }
+          grep -aqF "quark-dl.elf" quark-dl.elf || { echo "process name missing"; exit 1; }
+          echo "ok"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quark-dl-elf
+          path: quark-dl.elf
+          if-no-files-found: error

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quark DL</title>
+<link rel="icon" type="image/png" href="/icon0.png">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: #0f1115; color: #e8ecf1;
+    font: 15px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex; justify-content: center; padding: 32px 16px;
+  }
+  .wrap { width: 100%; max-width: 720px; }
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  h1 { font-size: 26px; margin: 0; letter-spacing: .5px; }
+  .tag { font-size: 12px; color: #7b8794; border: 1px solid #2a3038; border-radius: 999px; padding: 2px 10px; }
+  .sub { color: #8b97a5; margin: 0 0 24px; font-size: 13px; }
+  .card {
+    background: #161a20; border: 1px solid #232a33; border-radius: 14px;
+    padding: 18px 20px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: #7b8794; margin: 0 0 14px; font-weight: 600; }
+  .row { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px dashed #232a33; }
+  .row:last-child { border-bottom: 0; }
+  .k { color: #8b97a5; }
+  .v { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13.5px; text-align: right; word-break: break-all; }
+  .ok { color: #4ade80; }
+  .bad { color: #f87171; }
+  .muted { color: #6b7683; }
+  button {
+    appearance: none; border: 1px solid #2f3946; background: #1c2229; color: #e8ecf1;
+    padding: 11px 18px; border-radius: 10px; font-size: 14px; cursor: pointer;
+  }
+  button:hover { background: #232b34; }
+  button.danger { border-color: #5b2b2b; background: #2a1a1a; color: #fca5a5; }
+  button.danger:hover { background: #3a2020; }
+  button:disabled { opacity: .5; cursor: default; }
+  .note { color: #6b7683; font-size: 12.5px; line-height: 1.7; margin-top: 10px; }
+  code { background: #1c2229; border: 1px solid #232a33; border-radius: 5px; padding: 1px 6px; font-size: 12.5px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4ade80; margin-right: 7px; vertical-align: 1px; }
+  .dot.off { background: #f87171; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Quark DL</h1>
+    <span class="tag" id="version">—</span>
+  </header>
+  <p class="sub"><span class="dot" id="dot"></span><span id="statusText">正在连接…</span></p>
+
+  <div class="card">
+    <h2>运行状态</h2>
+    <div class="row"><span class="k">进程名（进程列表显示）</span><span class="v" id="name">—</span></div>
+    <div class="row"><span class="k">PID / 父进程</span><span class="v" id="pid">—</span></div>
+    <div class="row"><span class="k">端口</span><span class="v" id="port">—</span></div>
+    <div class="row"><span class="k">已运行</span><span class="v" id="uptime">—</span></div>
+    <div class="row"><span class="k">构建</span><span class="v" id="build">—</span></div>
+    <div class="row"><span class="k">同名实例</span><span class="v" id="instances">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>控制</h2>
+    <button id="exit" class="danger">结束运行（可重新加载）</button>
+    <p class="note">
+      点了之后进程自己退出，不写任何标记文件，也不影响下次加载。这是主机界面那个「终止」按钮对 payload
+      做不到的事。重启用你原来的方式再加载一次 ELF 即可。
+    </p>
+  </div>
+
+  <p class="note">
+    当前是骨架版：只验证「能加载、进程名正确、能主动退出」。登录与下载会在骨架确认无误后接入。
+    命令行核对：<code>curl http://PS5-IP:PORT/api/diag</code>
+  </p>
+</div>
+
+<script>
+(function () {
+  var el = function (id) { return document.getElementById(id); };
+  var busy = false;
+
+  function text(id, value) { el(id).textContent = value; }
+
+  function fmtUptime(ms) {
+    var s = Math.floor((ms || 0) / 1000);
+    if (s < 60) return s + ' 秒';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + ' 分 ' + (s % 60) + ' 秒';
+    return Math.floor(m / 60) + ' 小时 ' + (m % 60) + ' 分';
+  }
+
+  function render(d) {
+    var n = d.name || {};
+    var kernel = n.kernel || '';
+    var good = n.ok === true;
+
+    text('version', d.version || '—');
+    text('build', (d.build || '—').slice(0, 12));
+    text('pid', (d.pid || '—') + ' / ' + (d.ppid || '—'));
+    text('port', d.port || '—');
+    text('uptime', fmtUptime(d.uptime_ms));
+    text('instances', (n.instances === undefined ? '—' : n.instances) + ' 个');
+
+    el('name').innerHTML = '';
+    var span = document.createElement('span');
+    span.className = good ? 'ok' : 'bad';
+    span.textContent = kernel || '读不到';
+    el('name').appendChild(span);
+    if (!good) {
+      var hint = document.createElement('span');
+      hint.className = 'muted';
+      hint.textContent = '（期望 ' + (n.expected || 'quark-dl.elf') + '）';
+      el('name').appendChild(hint);
+    }
+
+    el('dot').className = 'dot';
+    text('statusText', '运行中 · 内核读到的进程名 ' + (kernel || '未知'));
+  }
+
+  function fail(err) {
+    el('dot').className = 'dot off';
+    text('statusText', '连接中断：' + (err && err.message ? err.message : '未知错误'));
+  }
+
+  function poll() {
+    if (busy) return;
+    fetch('/api/diag', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(render)
+      .catch(fail);
+  }
+
+  el('exit').onclick = function () {
+    var btn = el('exit');
+    btn.disabled = true;
+    btn.textContent = '正在退出…';
+    fetch('/api/exit', { method: 'POST' })
+      .then(function () {
+        el('dot').className = 'dot off';
+        text('statusText', '已退出。重新加载 ELF 即可再次启动。');
+        btn.textContent = '已结束';
+      })
+      .catch(function () {
+        el('dot').className = 'dot off';
+        text('statusText', '已退出（连接被断开属正常）。');
+        btn.textContent = '已结束';
+      });
+  };
+
+  poll();
+  setInterval(poll, 2000);
+})();
+</script>
+</body>
+</html>
