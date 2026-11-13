@@ -33,7 +33,13 @@
 
 /* The process list renders this. Keep the .elf suffix. */
 #define PROCESS_NAME "quark-dl.elf"
-#define DEFAULT_PORT 8888
+
+/* 8888 is taken by other payloads on this console (ps5-web-file-manager uses it
+ * by default), and a silent step to 8889 was the reason a browser could reach a
+ * different plugin's UI at the address it was told to open. Serve on 8765 and
+ * only walk forward a short distance, so the port stays predictable. */
+#define DEFAULT_PORT 8765
+#define PORT_SPAN 32
 
 static int
 port_available(unsigned short port) {
@@ -61,10 +67,14 @@ port_available(unsigned short port) {
 }
 
 static unsigned short
-find_available_port(unsigned short start) {
+find_available_port(unsigned short start, unsigned short span) {
+  unsigned int last = (unsigned int)start + span;
   unsigned int port;
 
-  for(port = start; port <= 65535; port++) {
+  if(last > 65535) {
+    last = 65535;
+  }
+  for(port = start; port <= last; port++) {
     int available = port_available((unsigned short)port);
     if(available < 0) {
       return 0;
@@ -137,10 +147,11 @@ main(int argc, char **argv) {
    * made the rename look impossible. */
   syscall(SYS_thr_set_name, -1, PROCESS_NAME);
 
-  /* One instance per console. A stale copy that moved to 8889 would otherwise
-   * keep serving an older build on the same data directory. Bounded on purpose:
-   * if the kernel will not let the old one go, serving is more useful than
-   * spinning here forever with no port open. */
+  /* One instance per console. A stale copy that moved to the next port would
+   * otherwise keep serving an older build, and requests sent to the announced
+   * port could land on it instead. Bounded on purpose: if the kernel will not
+   * let the old one go, serving is more useful than spinning here forever with
+   * no port open. */
   for(int tries = 0; tries < 5; tries++) {
     if((pid = find_pid(PROCESS_NAME)) <= 0) {
       break;
@@ -163,10 +174,15 @@ main(int argc, char **argv) {
   api_init();
 
   while(1) {
-    port = find_available_port(DEFAULT_PORT);
+    port = find_available_port(DEFAULT_PORT, PORT_SPAN);
     if(!port) {
-      fprintf(stderr, "no available port from %u\n", DEFAULT_PORT);
-      sleep(3);
+      fprintf(stderr, "no available port in %u..%u\n", DEFAULT_PORT,
+              DEFAULT_PORT + PORT_SPAN);
+      /* Nothing to serve on: say so out loud instead of retrying forever with
+       * no evidence, then keep trying in case the other plugin exits. */
+      notify_user("Quark DL %s\n端口 %u..%u 全被占用\n无法启动服务",
+                  BUILD_ID, DEFAULT_PORT, DEFAULT_PORT + PORT_SPAN);
+      sleep(5);
       continue;
     }
 

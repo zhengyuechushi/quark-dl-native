@@ -1,7 +1,7 @@
 {
   "applicationCategoryType": 65536,
   "titleId": "QDLK88888",
-  "deeplinkUri": "http://127.0.0.1:8888/",
+  "deeplinkUri": "http://127.0.0.1:8765/",
   "localizedParameters": {
     "defaultLanguage": "zh-Hans",
     "en-US": {

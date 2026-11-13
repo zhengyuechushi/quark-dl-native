@@ -57,6 +57,7 @@
     <div class="row"><span class="k">进程名（进程列表显示）</span><span class="v" id="name">—</span></div>
     <div class="row"><span class="k">PID / 父进程</span><span class="v" id="pid">—</span></div>
     <div class="row"><span class="k">端口</span><span class="v" id="port">—</span></div>
+    <div class="row"><span class="k">你连的地址</span><span class="v" id="host">—</span></div>
     <div class="row"><span class="k">已运行</span><span class="v" id="uptime">—</span></div>
     <div class="row"><span class="k">构建</span><span class="v" id="build">—</span></div>
     <div class="row"><span class="k">同名实例</span><span class="v" id="instances">—</span></div>
@@ -73,7 +74,12 @@
 
   <p class="note">
     当前是骨架版：只验证「能加载、进程名正确、能主动退出」。登录与下载会在骨架确认无误后接入。
-    命令行核对：<code>curl http://PS5-IP:PORT/api/diag</code>
+  </p>
+  <p class="note">
+    <a href="/api/diag" style="color:#7aa2ff">打开 /api/diag</a>（浏览器里是网页版，脚本仍拿 JSON）·
+    <a href="/api/diag?format=json" style="color:#7aa2ff">JSON</a> ·
+    <a href="/api/diag.txt" style="color:#7aa2ff">纯文本</a> ·
+    命令行：<code>curl http://PS5-IP:8765/api/diag?format=json</code>
   </p>
 </div>
 
@@ -101,6 +107,7 @@
     text('build', (d.build || '—').slice(0, 12));
     text('pid', (d.pid || '—') + ' / ' + (d.ppid || '—'));
     text('port', d.port || '—');
+    text('host', d.host || '—');
     text('uptime', fmtUptime(d.uptime_ms));
     text('instances', (n.instances === undefined ? '—' : n.instances) + ' 个');
 
@@ -146,7 +153,10 @@
   function poll() {
     if (busy) return;
     busy = true;
-    request('GET', '/api/diag', function (err, text) {
+    /* format=json on purpose: /api/diag renders a web page for browsers, and
+     * this is a script, whatever Accept header the console's XHR decides to
+     * send. */
+    request('GET', '/api/diag?format=json', function (err, text) {
       busy = false;
       if (err) { fail(err); return; }
       var data;

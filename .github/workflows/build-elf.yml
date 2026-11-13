@@ -54,30 +54,60 @@ jobs:
       - name: Endpoints and clean exit
         run: |
           set -e
+          PORT=8765
+          base="http://127.0.0.1:$PORT"
           ./quark-dl-linux > server.log 2>&1 &
           PID=$!
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8888/api/health > /dev/null 2>&1; then break; fi
+            if curl -fsS "$base/api/health" > /dev/null 2>&1; then break; fi
             sleep 0.5
           done
 
           echo "--- health ---"
-          curl -fsS http://127.0.0.1:8888/api/health | tee health.json
+          curl -fsS "$base/api/health" | tee health.json
           echo
-          echo "--- diag ---"
-          curl -fsS http://127.0.0.1:8888/api/diag | tee diag.json
-          echo
-          echo "--- index ---"
-          curl -fsS http://127.0.0.1:8888/ | head -c 120
-          echo
-
           grep -q '"ok":true' health.json
           grep -q '"build":"smoke"' health.json
+          grep -q '"port":8765' health.json
+
+          echo "--- diag as json (what scripts get) ---"
+          curl -fsS "$base/api/diag?format=json" | tee diag.json
+          echo
           grep -q '"expected":"quark-dl.elf"' diag.json
-          grep -q '"port":8888' diag.json
+          grep -q '"port":8765' diag.json
+          grep -q '"host":"127.0.0.1:8765"' diag.json
+          curl -sS -D ct-json.txt -o /dev/null "$base/api/diag"
+          grep -qi '^content-type: application/json' ct-json.txt
+
+          # The console run had this exact split: the page worked, typing the URL
+          # did not. Content type and path normalisation are what differ.
+          echo "--- diag as a page (what a browser gets) ---"
+          curl -fsS -H 'Accept: text/html' "$base/api/diag" > diag.html
+          curl -sS -D ct-html.txt -o /dev/null -H 'Accept: text/html' "$base/api/diag"
+          grep -qi '^content-type: text/html' ct-html.txt
+          grep -q '<title>Quark DL' diag.html
+          grep -q 'quark-dl.elf' diag.html
+
+          echo "--- diag keeps working with a query or a trailing slash ---"
+          curl -fsS "$base/api/diag?x=1" > /dev/null
+          curl -fsS "$base/api/diag/" > /dev/null
+          curl -fsS -H 'Accept: text/html' "$base/api/diag?format=json" | head -c 20 | grep -q '{'
+
+          echo "--- diag as plain text ---"
+          curl -fsS "$base/api/diag.txt" | tee diag.txt
+          grep -q 'quark-dl.elf' diag.txt
+
+          echo "--- unknown endpoint is a 404, not a hang ---"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$base/api/nope")
+          echo "status $code"
+          test "$code" = 404
+
+          echo "--- index ---"
+          curl -fsS "$base/" | head -c 120
+          echo
 
           echo "--- exit ---"
-          curl -fsS -X POST http://127.0.0.1:8888/api/exit
+          curl -fsS -X POST "$base/api/exit"
           echo
 
           for i in $(seq 1 20); do
@@ -90,4 +120,8 @@ jobs:
 
       - name: Log on failure
         if: failure()
-        run: cat server.log || true
+        run: |
+          cat server.log || true
+          for f in health.json diag.json diag.html diag.txt ct-json.txt ct-html.txt; do
+            echo "=== $f ==="; cat "$f" 2>/dev/null || true
+          done

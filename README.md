@@ -20,7 +20,7 @@ syscall(SYS_thr_set_name, -1, "web-file-mgr.elf");
 ```
 
 接着用 `sysctl({1,14,8,0})` 遍历进程表，按 `ki_tdname`（`kinfo_proc` 偏移 447）找同名进程并
-`SIGKILL`，然后 `find_available_port(8888)` + `websrv_listen()`。关闭靠 `/api/exit` →
+`SIGKILL`，然后 `find_available_port(8765)` + `websrv_listen()`。关闭靠 `/api/exit` →
 `websrv_stop()` → 主循环 `break` → `main` 返回。
 
 本工程把这段**原样保留**，只替换：进程名 → `quark-dl.elf`，业务路由 → `api.c`，
@@ -42,11 +42,11 @@ BUILD_ID=$(git rev-parse HEAD) bash ps5/build.sh
 
 加载 ELF（Toolbox 菜单 / `nc` 发 `file:...` / 网页 sender 都行），然后看三处：
 
-**A. 主机通知**：`Quark DL <构建号> / 端口: 8888 / 进程: quark-dl.elf`
+**A. 主机通知**：`Quark DL <构建号> / 端口: 8765 / 进程: quark-dl.elf`
 
 **B. 进程列表**：应显示 `quark-dl.elf`。名字由 `SYS_thr_set_name` 写入，是启动第一句。
 
-**C. 浏览器打开 `http://<PS5-IP>:8888`**：
+**C. 浏览器打开 `http://<PS5-IP>:8765`**：
 
 页面会显示「进程名（进程列表显示）」一行，值取自内核 `ki_tdname` —— 与进程列表同一字段，
 所以这一行就是答案，不用靠截图比对。
@@ -54,14 +54,14 @@ BUILD_ID=$(git rev-parse HEAD) bash ps5/build.sh
 命令行等价：
 
 ```sh
-curl http://<PS5-IP>:8888/api/diag
+curl http://<PS5-IP>:8765/api/diag
 ```
 
 ```json
 {
   "app": "quark-dl",
   "build": "…",
-  "pid": 123, "ppid": 1, "port": 8888,
+  "pid": 123, "ppid": 1, "port": 8765,
   "name": { "expected": "quark-dl.elf", "kernel": "quark-dl.elf",
             "readable": true, "ok": true, "instances": 1 },
   "exiting": false
@@ -94,7 +94,7 @@ curl http://<PS5-IP>:8888/api/diag
 
 `linux-smoke` 作业用同一份源码（不定义 `__SCE__`）在 CI 里真的启动了服务，并断言：
 
-- `GET /api/health` → `ok:true`、`build` 等于编译时的提交号、`port:8888`
+- `GET /api/health` → `ok:true`、`build` 等于编译时的提交号、`port:8765`
 - `GET /api/diag` → `name.ok:true`、`instances:1`
 - `GET /` → 返回内嵌页面
 - `POST /api/exit` → 进程在 250 ms 后消失（`kill -0` 失败）
