@@ -1003,6 +1003,7 @@ quark_direct_many(const quark_session *s, const char *const *fids, int n,
   int i;
   int rc;
   int got = 0;
+  int too_long = 0;
 
   if(n <= 0) {
     snprintf(err, errcap, "没有要换的文件");
@@ -1073,6 +1074,15 @@ quark_direct_many(const quark_session *s, const char *const *fids, int n,
      * the fid is what decides which URL belongs to which file. */
     for(k = 0; k < n; k++) {
       if(fids[k] && !strcmp(fids[k], fid)) {
+        /* A cut-off direct link is worse than no link: it is answered 412 or
+         * "SignatureDoesNotMatch" instead of "not here", so it reads like the
+         * session is wrong. Reported, not shortened. */
+        if(strlen(u) >= QUARK_URL_MAX) {
+          too_long = 1;
+          boot_trace("直链过长：%u 字节（上限 %d），已跳过 %s", (unsigned)strlen(u),
+                     QUARK_URL_MAX - 1, fids[k]);
+          break;
+        }
         snprintf(urls[k], QUARK_URL_MAX, "%s", u);
         got++;
         break;
@@ -1082,7 +1092,11 @@ quark_direct_many(const quark_session *s, const char *const *fids, int n,
   json_free(root);
   free(resp);
   if(!got) {
-    snprintf(err, errcap, "一个直链都没换到｜原始：%.240s", quark_last_raw());
+    if(too_long) {
+      snprintf(err, errcap, "直链超过 %d 字节上限", QUARK_URL_MAX - 1);
+    } else {
+      snprintf(err, errcap, "一个直链都没换到｜原始：%.240s", quark_last_raw());
+    }
     return -1;
   }
   return got;

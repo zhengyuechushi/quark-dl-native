@@ -41,7 +41,7 @@ typedef struct {
   volatile int cancel;
   long long done;
   long long total;
-  char url[900];
+  char url[QUARK_URL_MAX];
   char dir[300];
   char name[160];
   char err[140];
@@ -167,7 +167,11 @@ quark_host(const char *url) {
   int tls = 0;
   unsigned short port = 0;
   char host[200];
-  char path[900];
+  /* Only the host is read here, but the parse still has to walk the whole URL,
+   * so the buffer must be able to take the whole query: a link too long for it
+   * would otherwise be mistaken for "not a quark host" and the download would
+   * go out with no cookie at all. */
+  char path[QUARK_URL_MAX];
 
   if(!url ||
      http_url_parse(url, &tls, host, sizeof(host), &port, path, sizeof(path))) {
@@ -322,7 +326,10 @@ save_settings(void) {
 static void
 load_queue(void) {
   char path[400];
-  char line[1600];
+  /* id|state|done|total|dir|name|url. The url is the long field, and the line
+   * has to hold it whole: a link read back short is a broken signature that
+   * only shows up on the first attempt after a restart. */
+  char line[QUARK_URL_MAX + 700];
   FILE *f;
 
   snprintf(path, sizeof(path), "%s/downloads.txt", g_data);
@@ -525,9 +532,13 @@ dl_attempt(dl_task *t) {
   }
   /* One line per attempt, because the interesting failure here is invisible
    * from the queue: a link that resolves fine and then downloads nothing. With
-   * the header state and the resume offset on the record, boot.log says whether
-   * the CDN was given the three things it asks for. */
-  boot_trace("下载 %s：续传 %lld 字节，登录头=%s", t->name, have,
+   * the header state, the resume offset and the length of the link on the
+   * record, boot.log says whether the CDN was given the three things it asks
+   * for - and whether the link arrived whole. A signed URL that lost its tail
+   * is answered 412 or "SignatureDoesNotMatch", which look like credential
+   * problems and are not. */
+  boot_trace("下载 %s：URL %u 字节，续传 %lld 字节，登录头=%s", t->name,
+             (unsigned)strlen(t->url), have,
              isq ? (hdrs[0] ? "是" : "否（没有会话 cookie）") : "不需要");
 
   t->done = have;
@@ -555,24 +566,39 @@ dl_attempt(dl_task *t) {
   if(res.status == 400 || res.status == 401 || res.status == 403 ||
      res.status == 404 || res.status == 410) {
     close(fd);
-    snprintf(t->err, sizeof(t->err), "HTTP %d：链接无效或已过期", res.status);
-    boot_trace("下载失败 %s：HTTP %d %.180s", t->name, res.status,
-               sink.errbody);
+    if(res.status == 403 && strstr(sink.errbody, "SignatureDoesNotMatch")) {
+      /* The storage node recomputed the signature over what arrived and got a
+       * different answer, so the string we hold is not the string it signed -
+       * a link that lost bytes on the way, or one that has expired. Retrying
+       * the same bytes cannot help; asking for a new link can, which is what
+       * the retry button does. */
+      snprintf(t->err, sizeof(t->err),
+               "HTTP 403：直链签名不匹配，请回网盘页重新加入（会换新直链）");
+    } else {
+      snprintf(t->err, sizeof(t->err), "HTTP %d：链接无效或已过期", res.status);
+    }
+    boot_trace("下载失败 %s：HTTP %d 重定向 %d 次，实到 URL %u 字节 %.180s",
+               t->name, res.status, res.redirects,
+               (unsigned)strlen(res.final_url), sink.errbody);
     return -3;
   }
   if(res.status != 200 && res.status != 206) {
     close(fd);
     /* 412 is the CDN's anti-hotlink answer: the link is fine, the request did
      * not look like the browser download it was minted for. Named apart from a
-     * generic status because the fix is not "retry", it is the headers. */
+     * generic status because the fix is not "retry", it is the headers - and
+     * made permanent so the queue does not spend four attempts proving the
+     * same point in eight seconds. */
     if(res.status == 412) {
-      snprintf(t->err, sizeof(t->err), "HTTP 412：CDN 要求带登录头，链接被拒");
+      snprintf(t->err, sizeof(t->err),
+               "HTTP 412：CDN 拒绝，请回网盘页重新加入（会换新直链）");
     } else {
       snprintf(t->err, sizeof(t->err), "HTTP %d", res.status);
     }
-    boot_trace("下载失败 %s：HTTP %d %.180s", t->name, res.status,
-               sink.errbody);
-    return -1;
+    boot_trace("下载失败 %s：HTTP %d 重定向 %d 次，实到 URL %u 字节 %.180s",
+               t->name, res.status, res.redirects,
+               (unsigned)strlen(res.final_url), sink.errbody);
+    return res.status == 412 ? -3 : -1;
   }
   if(fsync(fd) != 0) {
     int saved = errno;
@@ -649,7 +675,11 @@ pump_locked(void) {
 
   for(i = 0; i < g_count && g_running < DL_LIMIT; i++) {
     dl_task *t = &g_task[i];
+    pthread_attr_t attr;
+    const pthread_attr_t *use = NULL;
     pthread_t th;
+    int attr_ok;
+    int started;
 
     if(!t->id || t->state != DL_QUEUED) {
       continue;
@@ -658,7 +688,20 @@ pump_locked(void) {
     t->attempts = 0;
     t->err[0] = 0;
     t->state = DL_RUNNING;
-    if(pthread_create(&th, NULL, dl_worker, t) != 0) {
+    /* One attempt's frame is around 30 KB - a 7 KB http_result (it carries the
+     * cookie jar), a 7 KB copy of the header block, and the HTTP client's
+     * scratch - and the platform's default thread stack is not something to
+     * gamble a download on. Naming it is what keeps "works until a link needs
+     * a big header block" from being a mystery on the console. */
+    attr_ok = (pthread_attr_init(&attr) == 0);
+    if(attr_ok && pthread_attr_setstacksize(&attr, 512u * 1024u) == 0) {
+      use = &attr;
+    }
+    started = pthread_create(&th, use, dl_worker, t);
+    if(attr_ok) {
+      pthread_attr_destroy(&attr);
+    }
+    if(started != 0) {
       t->state = DL_FAILED;
       snprintf(t->err, sizeof(t->err), "无法创建下载线程");
       continue;
@@ -746,6 +789,17 @@ dl_add(const char *url, const char *name, const char *dir, char *err,
   }
   if(strncmp(url, "http://", 7) && strncmp(url, "https://", 8)) {
     snprintf(err, cap, "只支持 http:// 或 https:// 链接");
+    return -1;
+  }
+  /* Refused, not shortened. Everything after the '?' of a quark direct link is
+   * part of its signature, so a link that does not fit the queue is a link that
+   * would be rejected by the CDN with a message about credentials. Saying so
+   * here costs one build and saves a round of 412. */
+  if(strlen(url) >= QUARK_URL_MAX) {
+    snprintf(err, cap, "URL 太长：%u 字节，上限 %d", (unsigned)strlen(url),
+             QUARK_URL_MAX - 1);
+    boot_trace("入队被拒：URL %u 字节超过上限 %d", (unsigned)strlen(url),
+               QUARK_URL_MAX - 1);
     return -1;
   }
   if(name && *name) {

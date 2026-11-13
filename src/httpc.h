@@ -24,8 +24,15 @@ typedef struct {
   long long connect_ms;
   long long total_ms;
   char ctype[64];
-  char location[512];
-  char final_url[1024];
+  /* A CDN that answers 302 to its storage node puts a *signed* URL in here, and
+   * those run long. At 512 bytes the redirect arrived cut in half, and the node
+   * answered 403 SignatureDoesNotMatch - a message about credentials for what
+   * was really a buffer size. Full length, same as URL_MAX in httpc.c. */
+  char location[2048];
+  /* Long enough to hold what was actually requested. Truncating this is
+   * harmless - it is only ever shown, never re-sent - but a cut-off URL in a
+   * log reads as if the client had asked for something else. */
+  char final_url[2048];
   char tls_info[96];       /* "TLSv1.3 / <cipher>", or "plain" */
   char tls_subject[128];
   char tls_issuer[128];

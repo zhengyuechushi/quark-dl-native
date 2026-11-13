@@ -79,13 +79,32 @@ class Handler(BaseHTTPRequestHandler):
         # not. Anything without the three headers a browser download carries is
         # answered 412 and stays unanswered - which is exactly the wall the
         # console hit, and the only way to test the fix off-hardware.
+        # A signed link whose query was cut short. A real CDN recomputes the
+        # signature over exactly what arrived, so a truncated URL is not a
+        # shorter request but a rejected one - 412 on the apache front end,
+        # 403 SignatureDoesNotMatch on the object-storage nodes. Fed by
+        # /redirect-long and by the long direct link in test-stage2.sh.
         if path.startswith('/hotlink'):
             referer = self.headers.get('Referer', '')
             cookie = self.headers.get('Cookie', '')
             agent = self.headers.get('User-Agent', '')
-            sys.stderr.write('HOTLINK referer=%r cookie=%r ua=%r\n'
-                             % (referer, cookie[:60], agent[:120]))
+            sig = q.get('sig', [''])[0]
+            want = q.get('siglen', ['0'])[0]
+            sys.stderr.write('HOTLINK path=%s sig=%d referer=%r cookie=%r ua=%r\n'
+                             % (path, len(sig), referer, cookie[:60],
+                                agent[:120]))
             sys.stderr.flush()
+            if want.isdigit() and int(want) > 0 and len(sig) != int(want):
+                body = ('{"status":412,"message":"signature truncated: got %d of %s"}'
+                        % (len(sig), want)).encode()
+                self.send_response(412)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                if not head_only:
+                    self.wfile.write(body)
+                return
             if (not referer.startswith('https://pan.quark.cn/')
                     or '__puus' not in cookie
                     or 'quark-cloud-drive' not in agent):
@@ -99,7 +118,22 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(body)
                 return
 
-        if path not in ('/file', '/slow', '/chunked', '/hotlink'):
+        # A CDN that answers with a redirect to its storage node. The Location
+        # is a signed URL of realistic length (~1.3 KB); at the old 512-byte
+        # buffer the follow-up request carried half a signature.
+        if path == '/redirect-long':
+            target = ('/hotlink-r?size=%s&siglen=%s&sig=%s'
+                      % (q.get('size', ['41000'])[0], q.get('siglen', ['1200'])[0],
+                         'a' * int(q.get('siglen', ['1200'])[0])))
+            self.send_response(302)
+            self.send_header('Location', target)
+            self.send_header('Content-Length', '0')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            return
+
+        if path not in ('/file', '/slow', '/chunked', '/hotlink', '/hotlink-long',
+                        '/hotlink-r'):
             self.send_response(404)
             self.send_header('Content-Length', '0')
             self.send_header('Connection', 'close')

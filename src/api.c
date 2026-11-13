@@ -571,7 +571,7 @@ form_field(const char *body, size_t len, const char *key, char *out,
 /* One "url" field may carry a whole list, one per line: the textarea on the
  * page is the natural place to paste several links at once. */
 static int
-form_urls(const char *body, size_t len, char out[][600], int max) {
+form_urls(const char *body, size_t len, char out[][QUARK_URL_MAX], int max) {
   size_t i = 0;
   int n = 0;
 
@@ -587,7 +587,9 @@ form_urls(const char *body, size_t len, char out[][600], int max) {
       i++;
     }
     if(end > start + 4 && !strncmp(body + start, "url=", 4)) {
-      char tmp[1600];
+      /* QUARK_URL_MAX, not 1600: a signed direct link is longer than that, and
+       * a value cut here would reach the queue with a broken signature. */
+      char tmp[QUARK_URL_MAX];
       char *p = tmp;
 
       url_decode(tmp, sizeof(tmp), body + start + 4, end - start - 4);
@@ -601,7 +603,7 @@ form_urls(const char *body, size_t len, char out[][600], int max) {
           p++;
         }
         if(*p) {
-          snprintf(out[n], 600, "%s", p);
+          snprintf(out[n], QUARK_URL_MAX, "%s", p);
           n++;
         }
         if(!nl) {
@@ -639,7 +641,9 @@ api_dl_list(struct MHD_Connection *conn) {
 
 static enum MHD_Result
 api_dl_add(struct MHD_Connection *conn, const char *body, size_t size) {
-  char urls[20][600];
+  /* Static: 20 * QUARK_URL_MAX is 40 KB, more than a microhttpd worker's stack
+   * wants, and the server serves one request at a time. */
+  static char urls[20][QUARK_URL_MAX];
   char name[200];
   char dir[340];
   char ids[400];

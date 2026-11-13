@@ -21,38 +21,60 @@
 #include "build.h"
 #include "net.h"
 
-#define HDR_MAX 8192
+/* Room for the request line plus every header. The worst case this client can
+ * produce is a 2 KB signed request target, a 7 KB session cookie and the rest
+ * of the block; 8 KB was not enough for that pair, and "请求头过长" would have
+ * read like a network fault. */
+#define HDR_MAX 16384
 
-/* The request header buffer, one per thread.
+/* Room for the request target: the path plus the whole query string.
+ *
+ * This is not a display buffer. A quark direct link is *signed* - the query
+ * carries auth_key/sign (or X-Amz-Signature on the object-storage nodes) - so
+ * every byte after the '?' is part of what the far end recomputes. A target
+ * that does not fit must therefore be an error, never a shorter request: cut
+ * the signature off and Apache answers 412 "precondition failed" while the
+ * storage node answers 403 SignatureDoesNotMatch, both of which read like a
+ * credentials problem and are not. */
+#define URL_MAX 2048
+#define PATH_MAX_ 2048
+
+/* Scratch buffers, one set per thread.
  *
  * Downloads run on their own threads and page requests on libmicrohttpd's, and
  * both reach this function, so a plain static would let one thread rewrite the
  * other's request while it is on the wire. A stack array of this size is what
  * the console could not afford in the first place. A pthread key gives each
  * thread a buffer that lives exactly as long as the thread. */
-static pthread_key_t g_head_key;
-static pthread_once_t g_head_once = PTHREAD_ONCE_INIT;
+typedef struct {
+  char head[HDR_MAX];
+  char url[URL_MAX];
+  char path[PATH_MAX_];
+} tls_scratch;
+
+static pthread_key_t g_scr_key;
+static pthread_once_t g_scr_once = PTHREAD_ONCE_INIT;
 
 static void
-head_release(void *p) {
+scr_release(void *p) {
   free(p);
 }
 
 static void
-head_key_init(void) {
-  pthread_key_create(&g_head_key, head_release);
+scr_key_init(void) {
+  pthread_key_create(&g_scr_key, scr_release);
 }
 
-static char *
-head_buffer(void) {
-  char *p;
+static tls_scratch *
+scratch(void) {
+  tls_scratch *p;
 
-  pthread_once(&g_head_once, head_key_init);
-  p = (char *)pthread_getspecific(g_head_key);
+  pthread_once(&g_scr_once, scr_key_init);
+  p = (tls_scratch *)pthread_getspecific(g_scr_key);
   if(!p) {
-    p = (char *)calloc(1, HDR_MAX);
+    p = (tls_scratch *)calloc(1, sizeof(*p));
     if(p) {
-      pthread_setspecific(g_head_key, p);
+      pthread_setspecific(g_scr_key, p);
     }
   }
   return p;
@@ -208,6 +230,16 @@ http_url_parse(const char *url, int *tls, char *host, size_t hostcap,
   }
 
   p = auth + alen;
+  {
+    /* "?" becomes a leading "/", and the NUL has to fit too. Refusing here is
+     * the whole point: snprintf would happily leave a half a signature in the
+     * buffer and the far end would call that a wrong signature. */
+    size_t need = strlen(p) + (p[0] == '?' ? 2u : 1u);
+
+    if(need > pathcap) {
+      return -2;
+    }
+  }
   if(*p == 0) {
     snprintf(path, pathcap, "/");
   } else if(*p == '?') {
@@ -387,7 +419,7 @@ next_url(char *out, size_t cap, const char *base, const char *location) {
 
 int
 http_perform(const http_req *req, http_result *out) {
-  char url[1024];
+  tls_scratch *sc = scratch();
   const char *method = (req->method && *req->method) ? req->method : "GET";
   int max_redirects = req->max_redirects > 0 ? req->max_redirects : 5;
   int timeout = req->timeout_ms > 0 ? req->timeout_ms : 15000;
@@ -397,31 +429,32 @@ http_perform(const http_req *req, http_result *out) {
   memset(out, 0, sizeof(*out));
   out->length = -1;
   out->total = -1;
+  if(!sc) {
+    snprintf(out->err, sizeof(out->err), "内存不足");
+    return -1;
+  }
   if(!req->url || !*req->url) {
     snprintf(out->err, sizeof(out->err), "URL 为空");
     return -1;
   }
-  if(strlen(req->url) >= sizeof(url)) {
-    snprintf(out->err, sizeof(out->err), "URL 过长");
+  if(strlen(req->url) >= sizeof(sc->url)) {
+    snprintf(out->err, sizeof(out->err), "URL 过长：%u 字节，上限 %u",
+             (unsigned)strlen(req->url), (unsigned)sizeof(sc->url) - 1);
     return -1;
   }
-  snprintf(url, sizeof(url), "%s", req->url);
+  snprintf(sc->url, sizeof(sc->url), "%s", req->url);
 
   for(;;) {
     int tls = 0;
     unsigned short port = 0;
     char host[200];
-    char path[800];
     char base[320];
     char hosthdr[240];
-    /* See head_buffer(): off the stack, and private to this thread. */
-    char *head = head_buffer();
-
-    if(!head) {
-      snprintf(out->err, sizeof(out->err), "内存不足");
-      out->total_ms = now_ms() - t_start;
-      return -1;
-    }
+    char *url = sc->url;
+    char *path = sc->path;
+    int prc;
+    /* See scratch(): off the stack, and private to this thread. */
+    char *head = sc->head;
     char line[HLINE_MAX];
     size_t used = 0;
     net_conn *c;
@@ -432,7 +465,16 @@ http_perform(const http_req *req, http_result *out) {
     int rc;
     int guard;
 
-    if(http_url_parse(url, &tls, host, sizeof(host), &port, path, sizeof(path))) {
+    prc = http_url_parse(url, &tls, host, sizeof(host), &port, path,
+                         PATH_MAX_);
+    if(prc == -2) {
+      snprintf(out->err, sizeof(out->err),
+               "URL 太长：路径与参数 %u 字节，上限 %u", (unsigned)strlen(url),
+               (unsigned)PATH_MAX_ - 1);
+      out->total_ms = now_ms() - t_start;
+      return -1;
+    }
+    if(prc) {
       snprintf(out->err, sizeof(out->err), "URL 无法解析: %.120s", url);
       out->total_ms = now_ms() - t_start;
       return -1;
@@ -584,7 +626,10 @@ http_perform(const http_req *req, http_result *out) {
     if(out->status >= 300 && out->status < 400 && out->location[0] &&
        redirects < max_redirects) {
       net_close(c);
-      if(next_url(url, sizeof(url), base, out->location) == 0) {
+      /* URL_MAX, not sizeof(url): url is a pointer into the scratch set now,
+       * and sizeof would be 8 - the whole redirect would be dropped on the
+       * floor with "URL too long" instead. */
+      if(next_url(url, URL_MAX, base, out->location) == 0) {
         redirects++;
         continue;
       }

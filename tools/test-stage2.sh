@@ -199,13 +199,47 @@ IDH=$(python3 -c "import json;print(json.load(open('$WORK/add-hot.json'))['ids']
 wait_state "$IDH" done
 payload 40000 >"$WORK/expected-hot.bin"
 cmp "$WORK/expected-hot.bin" "$DEST/hotlink" || fail "hotlink file differs"
-grep -q "HOTLINK referer='https://pan.quark.cn/'" "$WORK/mock.log" \
+grep -q "HOTLINK.*referer='https://pan.quark.cn/'" "$WORK/mock.log" \
   || fail "download did not send the quark Referer"
 grep -q "HOTLINK.*__puus=test-puus" "$WORK/mock.log" \
   || fail "download did not send the session cookie"
 grep -q "HOTLINK.*quark-cloud-drive" "$WORK/mock.log" \
   || fail "download did not send the client UA"
 echo "412 without the headers, 200 with them, 40000 bytes matched"
+
+say "a signed link longer than the queue slot must arrive whole"
+# On hardware this was the whole of "download failed": the direct link is a
+# signed URL, the queue's url field was 900 bytes and the request target 800,
+# so a link that did not fit lost its tail - and a link without its tail is
+# answered 412 by the apache front end or 403 SignatureDoesNotMatch by the
+# storage nodes, neither of which says "your buffer was too small".
+SIG=$(python3 -c "print('a' * 1200)")
+LONG="http://127.0.0.1:${PLAIN_PORT}/hotlink-long?size=41000&siglen=1200&sig=${SIG}"
+curl -fsS -X POST --data-urlencode "url=$LONG" --data-urlencode "dir=$DEST" \
+  "$BASE/api/dl/add" >"$WORK/add-long.json"
+IDL=$(python3 -c "import json;print(json.load(open('$WORK/add-long.json'))['ids'][0])")
+wait_state "$IDL" done
+payload 41000 >"$WORK/expected-long.bin"
+cmp "$WORK/expected-long.bin" "$DEST/hotlink-long" \
+  || fail "long direct link file differs"
+grep -q "HOTLINK path=/hotlink-long sig=1200 " "$WORK/mock.log" \
+  || fail "long direct link arrived truncated (mock counted fewer signature bytes)"
+echo "a ${#LONG}-byte link arrived with all 1200 signature bytes"
+
+say "a redirect whose Location is a long signed URL must be followed whole"
+# The same class of bug one layer up: a CDN that answers 302 to its storage
+# node puts a signed URL in Location, and those run past 512 bytes.
+curl -fsS -X POST \
+  --data-urlencode "url=http://127.0.0.1:${PLAIN_PORT}/redirect-long?size=22000&siglen=1200" \
+  --data-urlencode "dir=$DEST" "$BASE/api/dl/add" >"$WORK/add-redir.json"
+IDR=$(python3 -c "import json;print(json.load(open('$WORK/add-redir.json'))['ids'][0])")
+wait_state "$IDR" done
+payload 22000 >"$WORK/expected-redir.bin"
+cmp "$WORK/expected-redir.bin" "$DEST/redirect-long" \
+  || fail "redirected download differs"
+grep -q "HOTLINK path=/hotlink-r sig=1200 " "$WORK/mock.log" \
+  || fail "redirect Location arrived truncated"
+echo "1300-byte Location followed, 22000 bytes matched"
 
 say "resume: a pre-seeded .part must produce a Range request"
 head -c 120000 "$expected" >"$DEST/slow.part"
