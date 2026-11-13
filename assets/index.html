@@ -54,7 +54,7 @@
   details.help > summary:hover { color: #c9d2dc; }
   .qr-box { display: flex; flex-direction: column; align-items: center; margin-top: 14px; }
   .qr-box canvas { background: #fff; border-radius: 8px; padding: 12px; max-width: 100%; }
-  .qr-box canvas:not([width]) { display: none; }
+  .qr-box canvas[width="0"] { display: none; }
   code { background: #1c2229; border: 1px solid #232a33; border-radius: 5px; padding: 1px 6px; font-size: 12.5px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4ade80; margin-right: 7px; vertical-align: 1px; }
   .dot.off { background: #f87171; }
@@ -775,7 +775,7 @@
       function (err, d) {
         btn.disabled = false;
         if (err) { text('qMsg', '失败：' + err.message); return; }
-        if (d.need_login) { text('qStateV', '未登录'); text('qMsg', '登录已失效，重新粘 cookie'); return; }
+        if (d.need_login) { text('qStateV', '未登录'); text('qMsg', '登录已失效，重新点「扫码登录」'); return; }
         var msg = '已加入 ' + d.queued + ' 个任务';
         if (d.failed) msg += '，' + d.failed + ' 个失败';
         if (d.error) msg += '（' + d.error + '）';
@@ -795,6 +795,8 @@
    * looking at. */
   json('GET', '/api/quark/status', null, function (err, d) {
     if (err || !d || !d.logged_in) return;
+    /* 已经登录时不该再劝人扫码：把提示换成事实，二维码区保持隐藏。 */
+    text('qrHint', '已登录，下面是网盘根目录。想换账号就点「退出登录」再扫。');
     text('qStateV', (d.nickname || '已登录') +
       (d.total_bytes ? ' · 共 ' + fmtSize(d.total_bytes) +
         '，已用 ' + fmtSize(d.used_bytes) : ''));

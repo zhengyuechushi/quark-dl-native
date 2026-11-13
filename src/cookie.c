@@ -1,5 +1,6 @@
 #include "cookie.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* A cookie for this service runs to a few kilobytes. The temporary buffer has to

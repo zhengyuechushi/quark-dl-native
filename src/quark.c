@@ -322,6 +322,21 @@ quark_cookie_keys(const char *cookie, char *out, size_t cap, int *count) {
  * Step 4 is why httpc grew a cookie jar. There is no JSON body worth reading
  * there, and no other endpoint in this program ever needs Set-Cookie. */
 
+/* The host of an absolute URL, for error messages. Never the full URL: the
+ * query strings here are one-shot tokens. */
+static void
+fetch_host(const char *url, char *out, size_t cap) {
+  const char *p = strstr(url, "://");
+  size_t n = 0;
+
+  p = p ? p + 3 : url;
+  while(p[n] && p[n] != '/' && p[n] != '?' && n + 1 < cap) {
+    out[n] = p[n];
+    n++;
+  }
+  out[n] = 0;
+}
+
 /* One request to an arbitrary host, with or without a session. Every listing
  * call goes through call(), which is pinned to the API host and refuses to run
  * without a cookie - both of which the login flow predates. `out` may be NULL
@@ -385,7 +400,12 @@ fetch(const char *url, const char *cookie, const char *accept, char **out,
     return -1;
   }
   if(meta->status != 200) {
-    snprintf(err, errcap, "HTTP %d（%s）", meta->status, url);
+    /* Host only: the query string of every URL here carries a one-shot token,
+     * and an error message ends up on a screen that gets photographed. */
+    char host[80];
+
+    fetch_host(url, host, sizeof(host));
+    snprintf(err, errcap, "HTTP %d（%s）", meta->status, host);
     free(buf.p);
     return -1;
   }
@@ -472,8 +492,10 @@ qr_exchange(const char *ticket, quark_session *s, char *err, size_t errcap) {
   /* Without these two the service answers every later call with 401, and the
    * page would show "登录成功" followed by an empty drive. */
   if(!strstr(meta.set_cookie, "__pus") && !strstr(meta.set_cookie, "__puus")) {
+    /* No value in the message: a session cookie on a screen is a credential in
+     * a photograph. The names alone say what went wrong. */
     snprintf(err, errcap,
-             "登录响应缺 __pus/__puus（拿到 %.120s），扫码未生效", meta.set_cookie);
+             "登录响应里没有 __pus/__puus（只有其它 Cookie），扫码未生效");
     return -1;
   }
   memset(s, 0, sizeof(*s));
