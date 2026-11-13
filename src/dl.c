@@ -683,7 +683,7 @@ typedef struct {
 } seg_thread;
 
 /* Shared coordinator state, one per segmented download. */
-typedef struct {
+typedef struct seg_pool {
   pthread_mutex_t lock;
   pthread_cond_t cond;
   int in_flight;        /* threads running, guarded by lock */
