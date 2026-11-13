@@ -331,7 +331,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.6.1';
+  var PAGE_V = '0.6.2';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -536,11 +536,16 @@
     return slash > 0 ? n.slice(0, slash) : '';
   }
 
+  /* Which folder groups are currently expanded. pollQueue() rebuilds the whole
+   * list every 2s, so without this the user's open/close choice is lost the next
+   * tick and a group they just opened snaps shut. Keyed by folder name. */
+  var openGroups = {};
+
   /* Renders one collapsible folder group. `folder` is the top-level name, and
    * `items` are the tasks whose relative path starts with it. */
   function groupNode(folder, items) {
     var box = document.createElement('div');
-    box.className = 'grp';
+    box.className = openGroups[folder] ? 'grp open' : 'grp';
 
     var head = document.createElement('div');
     head.className = 'grp-head';
@@ -582,8 +587,12 @@
 
     head.onclick = function () {
       /* className string toggle, not classList: the console's browser is old
-       * enough that classList is not worth betting the page on. */
-      box.className = (box.className === 'grp open') ? 'grp' : 'grp open';
+       * enough that classList is not worth betting the page on. Remember the
+       * choice so the 2s pollQueue refresh keeps it instead of snapping shut. */
+      var open = box.className === 'grp open';
+      if (open) { delete openGroups[folder]; }
+      else { openGroups[folder] = true; }
+      box.className = open ? 'grp' : 'grp open';
     };
     return box;
   }

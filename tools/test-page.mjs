@@ -397,8 +397,14 @@ check('分组默认折叠', !/\bopen\b/.test(grps[0].className), grps[0].classNa
 const head = grps[0].children.find((c) => c.className === 'grp-head');
 head.onclick();
 check('点击后展开', /\bopen\b/.test(grps[0].className), grps[0].className);
-head.onclick();
-check('再点收起', !/\bopen\b/.test(grps[0].className), grps[0].className);
+/* The 2s pollQueue rebuilds the whole list; the open choice must survive it
+ * instead of snapping shut. Re-run the poll and re-grab the freshly-built node. */
+drain();
+const grps2 = nodeFor('tasks').children.filter((c) => c.className.indexOf('grp') === 0);
+check('刷新后展开态保持', /\bopen\b/.test(grps2[0].className), grps2[0].className);
+const head2 = grps2[0].children.find((c) => c.className === 'grp-head');
+head2.onclick();
+check('刷新后再点收起', !/\bopen\b/.test(grps2[0].className), grps2[0].className);
 
 console.log('\n勾选文件夹时，文件夹名作为 d 标记一起发出');
 /* The folder row's checkbox is the way in (its name span navigates). The name
