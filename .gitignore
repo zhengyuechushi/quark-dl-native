@@ -8,3 +8,4 @@ server.log
 .quark-dl-data/
 .smoke-data/
 .smoke-dl/
+deliverables-stage*/

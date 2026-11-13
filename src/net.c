@@ -727,11 +727,12 @@ connect_to(const char *ip, unsigned short port, int timeout_ms, char *err,
   /* A large receive buffer lets the kernel absorb a burst without the reader
    * stalling between recv calls. The 4 KB reader this once used is exactly why
    * a big file crawled while a small one finished in a blink: every recv that
-   * returns little forces another round trip through the TLS layer. 256 KB is
-   * a middle ground the console's kernel accepts and is not a floor or a cap,
-   * so a refusal is ignored. */
+   * returns little forces another round trip through the TLS layer. Sized above
+   * the 256 KB body buffer so the kernel can keep feeding a full read even while
+   * the previous block is still being written to disk; a refusal is ignored, so
+   * this is a request for headroom, not a hard requirement. */
   {
-    int rsz = 256 * 1024;
+    int rsz = 1024 * 1024;
     setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rsz, sizeof(rsz));
   }
   return fd;
@@ -811,20 +812,44 @@ net_read(net_conn *c, void *buf, size_t len, char *err, size_t cap) {
   }
 #ifdef QDL_TLS
   if(c->use_tls) {
-    int rc = mbedtls_ssl_read(&c->tls.ssl, (unsigned char *)buf, len);
+    /* mbedtls_ssl_read returns at most one TLS record of plaintext per call
+     * (16 KB with the default MBEDTLS_SSL_IN_CONTENT_LEN). A single call that
+     * asks for the 256 KB body buffer therefore hands back 16 KB and the caller
+     * spends the next cycle on the small tail. Loop here until the buffer is
+     * full or the stream ends, so one net_read fills the whole block and the
+     * download's read-then-write cycle count drops ~16x - the same "read a
+     * large block, write it once" shape the working exFAT build uses. Each
+     * iteration is still one TLS record, which is the protocol's ceiling; the
+     * win is in the syscall and scheduling overhead, not in record size. */
+    size_t got = 0;
 
-    if(rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
-      return 0;
+    while(got < len) {
+      int rc = mbedtls_ssl_read(&c->tls.ssl, (unsigned char *)buf + got,
+                                len - got);
+
+      if(rc == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+        break;
+      }
+      if(rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
+        /* The socket is blocking, so this only happens on a signal interrupt;
+         * retrying is the right answer, not a timeout error. */
+        continue;
+      }
+      if(rc < 0) {
+        if(got) {
+          /* Bytes already decrypted this call: hand them back, the caller will
+           * surface the error on the next read. */
+          break;
+        }
+        tls_error(err, cap, "TLS 读取失败", rc);
+        return -1;
+      }
+      if(rc == 0) {
+        break;
+      }
+      got += (size_t)rc;
     }
-    if(rc == MBEDTLS_ERR_SSL_WANT_READ || rc == MBEDTLS_ERR_SSL_WANT_WRITE) {
-      snprintf(err, cap, "TLS 读取超时");
-      return -1;
-    }
-    if(rc < 0) {
-      tls_error(err, cap, "TLS 读取失败", rc);
-      return -1;
-    }
-    return rc;
+    return (long)got;
   }
 #endif
   for(;;) {

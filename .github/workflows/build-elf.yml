@@ -162,16 +162,22 @@ jobs:
           grep -q "int dl_set_limit(int n)" src/dl.h
           echo ok
 
-      # A 4 KB body reader forces one read() + write() system call per 4 KB,
-      # which a big file turns into a million of each and crawls while a small
-      # file finishes in a blink. The reader must stay on the large scratch
-      # buffer, not shrink back to a stack array.
-      - name: Body reader stays on a large buffer
+      # A small body reader forces one read() + write() system call per fill,
+      # which a big file turns into a quarter million of each and crawls while a
+      # small file finishes in a blink. mbedtls_ssl_read hands back one 16 KB TLS
+      # record per call, so net_read must loop until the large block is full, and
+      # that block must match the 256 KB chunk the working exFAT build uses. The
+      # reader must stay on the large scratch buffer, never shrink to a stack
+      # array, and never fall back to a per-record write loop.
+      - name: Body reader fills a large block before writing
         run: |
           set -e
-          grep -q "unsigned char body\[65536\]" src/httpc.c
+          grep -q "unsigned char body\[256 \* 1024\]" src/httpc.c
           grep -q "r.cap = sizeof(sc->body)" src/httpc.c
+          grep -q "while(got < len)" src/net.c
+          grep -q "got += (size_t)rc" src/net.c
           grep -q "SO_RCVBUF" src/net.c
+          grep -q "1024 \* 1024" src/net.c
           echo ok
 
       # The page ships inside the ELF, so what it does is invisible until it is
