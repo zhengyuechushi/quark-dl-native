@@ -165,14 +165,14 @@ main(int argc, char **argv) {
       continue;
     }
 
-    printf("listening on port %u\n", port);
+    printf("listening on port %u\n", (unsigned)port);
     fflush(stdout);
     api_set_port(port);
 
 #ifdef __SCE__
     if(notified_port != port) {
       notify_user("Quark DL %s\n端口: %u\n进程: %s",
-                  BUILD_ID, port, PROCESS_NAME);
+                  BUILD_ID, (unsigned)port, PROCESS_NAME);
       notified_port = port;
     }
 #endif

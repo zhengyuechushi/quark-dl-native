@@ -99,8 +99,8 @@ api_health(struct MHD_Connection *conn) {
 static enum MHD_Result
 api_diag(struct MHD_Connection *conn) {
   char kernel_name[256];
-  char safe_name[512];
-  char body[1024];
+  char safe_name[384];
+  char body[2048];
   int named;
   int instances;
   int allow_default;
