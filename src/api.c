@@ -1252,7 +1252,11 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
   char err[400];
   char eerr[700];
   char first[400];
-  char json[1600];
+  /* Room for both escaped blobs: the error alone can grow to 700 bytes once
+   * quotes and braces are escaped, and truncating here would hand the page a
+   * JSON string it cannot parse - which reads as "the button did nothing",
+   * the exact failure this endpoint is being fixed for. */
+  char json[2400];
   /* Per-thread rather than per-frame: this struct carries a 7 KB cookie, and
    * these handlers run on libmicrohttpd worker threads whose stack is small
    * and not ours to set. Each thread serves one connection at a time, so a
@@ -1266,8 +1270,14 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
   int queued = 0;
   int failed = 0;
   int dirs = 0;
+  int picked = 0;
+  time_t started;
 
-  items = (char *)malloc(256u * 1024u);
+  /* Sized from the request, not a fixed 256 KB: 2000 files at 32+256 bytes a
+   * line is nearly 600 KB, and url_decode stops silently at the cap - so a big
+   * folder would arrive with its last line chopped in half and fail to resolve
+   * a link that was perfectly fine. Decoding never expands, so size is enough. */
+  items = (char *)malloc((size_t)size + 1);
   arr = (add_item *)calloc(QUARK_ADD_MAX, sizeof(*arr));
   if(!items || !arr) {
     free(items);
@@ -1275,9 +1285,16 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
     return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
                      "{\"ok\":false,\"error\":\"内存不足\"}");
   }
-  if(!form_field(body, size, "items", items, 256u * 1024u)) {
+  /* This handler is the one that can take minutes, and until now it left no
+   * trace at all: a button that queues nothing looks exactly like a folder
+   * that is slow. Every stage below is on the record so boot.log answers
+   * "where did it stop" without another build. */
+  started = time(NULL);
+  boot_trace("add: 收到请求 body=%u 字节", (unsigned)size);
+  if(!form_field(body, size, "items", items, (size_t)size + 1)) {
     free(items);
     free(arr);
+    boot_trace("add: 请求里没有 items 字段");
     return send_json(conn, MHD_HTTP_BAD_REQUEST,
                      "{\"ok\":false,\"error\":\"没有收到 items 字段\"}");
   }
@@ -1290,6 +1307,7 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
   if(!s.valid) {
     free(items);
     free(arr);
+    boot_trace("add: 会话无效（未登录）");
     return send_json(conn, MHD_HTTP_OK,
                      "{\"ok\":false,\"need_login\":true,"
                      "\"error\":\"还没有登录\"}");
@@ -1317,6 +1335,7 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
     if(!line[0]) {
       continue;
     }
+    picked++;
     if(flag && flag[0] == 'd') {
       int before = cc.count;
 
@@ -1349,6 +1368,9 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
   }
   free(items);
 
+  boot_trace("add: 勾选 %d 项（其中目录 %d 个），展开后 %d 个文件，目标目录 %s",
+             picked, dirs, cc.count, dest[0] ? dest : "(默认)");
+
   if(cc.overflow) {
     failed++;
     if(!first[0]) {
@@ -1363,6 +1385,7 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
    * which is not something to put in a console thread's frame. */
   {
     int base = 0;
+    int logged = 0;
     char(*urls)[QUARK_URL_MAX] =
         (char(*)[QUARK_URL_MAX])malloc((size_t)QUARK_BATCH * QUARK_URL_MAX);
 
@@ -1386,10 +1409,16 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
       }
       got = quark_direct_many(&s, fids, n, (char(*)[QUARK_URL_MAX])urls, err,
                               sizeof(err));
+      boot_trace("add: 第 %d~%d 个文件换直链，得到 %d 条", base + 1, base + n,
+                 got);
       if(got < 0) {
         failed += n;
         if(!first[0]) {
           snprintf(first, sizeof(first), "%s", err);
+        }
+        if(logged < 3) {
+          logged++;
+          boot_trace("add: 这一批换直链失败：%s", err);
         }
         base += n;
         continue;
@@ -1406,6 +1435,10 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
         if(dl_add(urls[i], arr[base + i].name[0] ? arr[base + i].name : NULL,
                   dest[0] ? dest : NULL, err, sizeof(err)) < 0) {
           failed++;
+          if(logged < 3) {
+            logged++;
+            boot_trace("add: 入队失败 %s：%s", arr[base + i].name, err);
+          }
           if(!first[0]) {
             snprintf(first, sizeof(first), "%s: %s", arr[base + i].name, err);
           }
@@ -1418,6 +1451,9 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
     free(urls);
   }
   free(arr);
+  boot_trace("add: 完成 入队 %d 失败 %d 耗时 %ld 秒%s%.160s", queued, failed,
+             (long)(time(NULL) - started), first[0] ? "，首个错误：" : "",
+             first);
   json_escape(eerr, sizeof(eerr), first);
   {
     char eraw[520];

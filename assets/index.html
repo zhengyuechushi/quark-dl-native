@@ -78,8 +78,12 @@
   .crumb { font-size: 13px; color: #8b97a5; margin-bottom: 10px; word-break: break-all; }
   .crumb a { color: #7aa2ff; cursor: pointer; }
   .crumb a:hover { text-decoration: underline; }
-  .qitem { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px dashed #232a33; }
+  .qitem { display: flex; align-items: center; gap: 10px; padding: 9px 8px; margin: 0 -8px; border-radius: 8px; border-top: 1px dashed #232a33; cursor: pointer; }
   .qitem:first-child { border-top: 0; }
+  /* Selected rows are tinted: the checkbox alone is too small to answer
+     "what did I pick" from a couch. */
+  .qitem.on { background: #172130; }
+  .qitem.on .qn { color: #eaf1ff; }
   .qitem input[type=checkbox] { width: 17px; height: 17px; flex: 0 0 auto; accent-color: #4f8cff; }
   .qitem .qn { flex: 1; font-size: 14px; word-break: break-all; }
   .qitem .qn.dir { color: #7aa2ff; cursor: pointer; }
@@ -170,6 +174,11 @@
       <button id="qAdd">加入下载队列</button>
       <span class="muted" id="qSel">已选 0 项</span>
     </div>
+    <!-- Where this button reports. It used to reuse the account card's #qMsg,
+         which sits above the QR image and the whole cookie block - so every
+         result ("pick something first", "queued 3", "failed: ...") was printed
+         off-screen and the button looked like it did nothing. -->
+    <p class="note" id="qAddMsg" style="display:none"></p>
     <p class="note">
       勾目录会递归整个文件夹（最多 2000 个文件，分 50 个一批换直链）。文件下到上面那个保存目录。
       这个页面只读网盘，不会移动、改名或删除任何东西。
@@ -219,13 +228,20 @@
   var busy = false;
   var queueBusy = false;
   var dirTouched = false;
+  /* True while /api/quark/add is in flight. The console runs one request at a
+   * time (single MHD thread), so the two 2-second pollers would pile up behind
+   * a slow folder expansion, time out at 30 s and repaint the header as
+   * "connection lost" - which reads like a crash while it is only queueing.
+   * Suspending them for the duration costs nothing and removes that whole
+   * failure mode. */
+  var addBusy = false;
 
   /* This page ships inside the ELF, so it cannot learn its own version from
    * anywhere else; the console reports the version it is actually running.
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.4.5';
+  var PAGE_V = '0.4.6';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -344,7 +360,7 @@
   }
 
   function pollDiag() {
-    if (busy) return;
+    if (busy || addBusy) return;
     busy = true;
     json('GET', '/api/diag?format=json', null, function (err, data) {
       busy = false;
@@ -418,7 +434,7 @@
   }
 
   function pollQueue() {
-    if (queueBusy) return;
+    if (queueBusy || addBusy) return;
     queueBusy = true;
     json('GET', '/api/dl/list', null, function (err, data) {
       queueBusy = false;
@@ -521,7 +537,26 @@
     return n;
   }
 
-  function qSetSel() { text('qSel', '已选 ' + qCount() + ' 项'); }
+  function qSetSel() {
+    var n = qCount();
+    var box = el('qSel');
+    box.textContent = '已选 ' + n + ' 项';
+    /* Blue as soon as something is picked: the button next to it only becomes
+     * meaningful then, and a grey "selected 0" beside a grey button reads as
+     * one dead control. */
+    box.style.color = n ? '#7aa2ff' : '';
+  }
+
+  /* The queue button's own status line. Colour is set inline rather than with
+   * .ok/.bad: .note comes later in the stylesheet and would win the cascade,
+   * leaving every error grey. Empty text hides the paragraph, so a normal page
+   * has no stray blank block. */
+  function qaMsg(s, tone) {
+    var box = el('qAddMsg');
+    box.textContent = s || '';
+    box.style.color = tone === 'bad' ? '#f87171' : tone === 'ok' ? '#4ade80' : '';
+    box.style.display = s ? 'block' : 'none';
+  }
 
   /* ----- 扫码登录 ----- */
 
@@ -606,6 +641,7 @@
         qShowRaw('');
         text('qrHint', '已登录，下面就是网盘根目录。');
         text('qMsg', '扫码成功');
+        qaMsg('');
         text('qStateV', (d.nickname || '已登录') +
           (d.total_bytes ? ' · 共 ' + fmtSize(d.total_bytes) +
             '，已用 ' + fmtSize(d.used_bytes) : ''));
@@ -672,7 +708,7 @@
     for (var i = 0; i < d.entries.length; i++) {
       (function (e) {
         var row = document.createElement('div');
-        row.className = 'qitem';
+        row.className = 'qitem' + (qSel[e.fid] ? ' on' : '');
 
         var cb = document.createElement('input');
         cb.type = 'checkbox';
@@ -683,6 +719,9 @@
           } else {
             delete qSel[e.fid];
           }
+          /* The ticked row is tinted, so "what is selected" survives a scroll
+           * and does not depend on spotting a 17px square. */
+          row.className = 'qitem' + (cb.checked ? ' on' : '');
           qSetSel();
         };
         row.appendChild(cb);
@@ -698,6 +737,18 @@
         }
         row.appendChild(nm);
 
+        /* Tapping anywhere on the row toggles it. A 17px checkbox was the only
+         * way in, and tapping the row - the obvious gesture - did nothing at
+         * all, which reads as "selection is broken"; on a console browser the
+         * small box is also a poor target. Folder names still navigate. */
+        row.onclick = function (ev) {
+          var t = (ev && ev.target) || (window.event && window.event.srcElement);
+          if (t === cb) return;
+          if (t === nm && e.dir) return;
+          cb.checked = !cb.checked;
+          if (cb.onchange) cb.onchange();
+        };
+
         var meta = document.createElement('span');
         meta.className = 'qd';
         meta.textContent = e.dir ? '' : fmtSize(e.size);
@@ -711,13 +762,13 @@
   function qLoad() {
     var cur = qPath[qPath.length - 1];
     qCrumb();
-    text('qMsg', '正在读目录…');
+    qaMsg('正在读目录…');
     json('GET', '/api/quark/list?pdir=' + encodeURIComponent(cur.fid), null, function (err, d) {
-      text('qMsg', '');
-      if (err) { text('qMsg', '列目录失败：' + err.message); return; }
+      qaMsg('');
+      if (err) { qaMsg('列目录失败：' + err.message, 'bad'); return; }
       if (!d.ok) {
         if (d.need_login) { text('qStateV', '未登录'); }
-        text('qMsg', d.error || '列目录失败');
+        qaMsg(d.error || '列目录失败', 'bad');
         qShowRaw(d.raw || '');
         return;
       }
@@ -751,6 +802,7 @@
       qShowRaw('');
       qrClear();
       text('qCookieMsg', '登录成功 · 解析到 ' + d.count + ' 个 cookie 字段');
+      qaMsg('');
       text('qrHint', '已登录，下面就是网盘根目录。');
       text('qStateV', (d.nickname || '已登录') +
         (d.total_bytes ? ' · 共 ' + fmtSize(d.total_bytes) +
@@ -767,6 +819,7 @@
     json('POST', '/api/quark/logout', '', function () {
       text('qStateV', '未登录');
       text('qMsg', '已退出登录');
+      qaMsg('');
       text('qrHint', '点上面的「扫码登录」，然后用手机上的夸克 App 扫这个码。');
       text('qCrumb', '');
       el('qList').textContent = '';
@@ -789,8 +842,8 @@
   };
 
   el('qAdd').onclick = function () {
-    var lines = [], k;
-    if (!qCount()) { text('qMsg', '先勾选文件或目录'); return; }
+    var lines = [], k, n = qCount();
+    if (!n) { qaMsg('先在上面勾选文件或目录（每行左边的方框）', 'bad'); return; }
     for (k in qSel) {
       if (!qSel.hasOwnProperty(k)) continue;
       /* Tab-separated: the name may contain pipes, slashes or anything else a
@@ -798,24 +851,66 @@
       lines.push(k + '\t' + qSel[k].name + '\t' + (qSel[k].dir ? 'd' : 'f'));
     }
     var btn = el('qAdd');
+    var label = btn.textContent;
+    var t0 = Date.now();
+
     btn.disabled = true;
-    text('qMsg', '正在换直链并加入队列…（目录越大越慢，别关页面）');
+    addBusy = true;
+    qaMsg('正在换直链并加入队列…（已选 ' + n + ' 项，目录越大越慢，页面别关）');
+
+    /* A silent spinner looks exactly like a dead button, and a folder of a
+     * thousand files legitimately takes minutes here: each batch of 50 links
+     * is a round trip to Quark. Count the seconds out loud so waiting is
+     * visibly different from nothing happening. */
+    btn.textContent = '处理中 0 秒';
+    var tick = setInterval(function () {
+      btn.textContent = '处理中 ' + Math.floor((Date.now() - t0) / 1000) + ' 秒';
+    }, 1000);
+
+    function done() {
+      clearInterval(tick);
+      btn.textContent = label;
+      btn.disabled = false;
+      addBusy = false;
+    }
+
     json('POST', '/api/quark/add',
       'items=' + encodeURIComponent(lines.join('\n')) +
       '&dir=' + encodeURIComponent(el('dir').value.trim()),
       function (err, d) {
-        btn.disabled = false;
-        if (err) { text('qMsg', '失败：' + err.message); return; }
-        if (d.need_login) { text('qStateV', '未登录'); text('qMsg', '登录已失效，重新点「扫码登录」'); return; }
-        var msg = '已加入 ' + d.queued + ' 个任务';
+        done();
+        var secs = Math.floor((Date.now() - t0) / 1000);
+
+        if (err) {
+          qaMsg('加入失败（用时 ' + secs + ' 秒）：' + err.message, 'bad');
+          pollDiag();
+          pollQueue();
+          return;
+        }
+        if (d.need_login) {
+          text('qStateV', '未登录');
+          qaMsg('登录已失效，重新点上面的「扫码登录」', 'bad');
+          pollDiag();
+          pollQueue();
+          return;
+        }
+        var msg = '已加入 ' + (d.queued || 0) + ' 个任务';
         if (d.failed) msg += '，' + d.failed + ' 个失败';
-        if (d.error) msg += '（' + d.error + '）';
-        text('qMsg', msg);
+        msg += '（用时 ' + secs + ' 秒）';
+        if (d.error) {
+          msg += '。原因：' + d.error;
+        } else if (d.queued) {
+          msg += '。下面的「下载」卡片里能看到进度。';
+        }
+        qaMsg(msg, (d.queued && !d.failed) ? 'ok' : (d.queued ? '' : 'bad'));
         qShowRaw(d.failed && d.raw ? d.raw : '');
-        qSel = {};
-        qSetSel();
-        var boxes = el('qList').getElementsByTagName('input');
-        for (var i = 0; i < boxes.length; i++) boxes[i].checked = false;
+        if (d.queued) {
+          qSel = {};
+          qSetSel();
+          var boxes = el('qList').getElementsByTagName('input');
+          for (var i = 0; i < boxes.length; i++) boxes[i].checked = false;
+        }
+        pollDiag();
         pollQueue();
       }, 300000);
   };

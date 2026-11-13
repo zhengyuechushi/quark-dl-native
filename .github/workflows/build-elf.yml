@@ -77,6 +77,14 @@ jobs:
       - name: Build host binary
         run: make linux BUILD_ID=smoke TLS_PREFIX="$HOME/mbedtls"
 
+      # The page ships inside the ELF, so what it does is invisible until it is
+      # on a console - and "I picked a file, pressed the button, nothing
+      # happened" is exactly the report that blind spot produces. This runs the
+      # shipped script against a stub DOM and asserts what the user would see
+      # after each press. No build needed, so it fails fast.
+      - name: Page behaviour
+        run: node tools/test-page.mjs
+
       - name: Endpoints and clean exit
         run: |
           set -e
@@ -175,6 +183,22 @@ jobs:
           grep -q "main 进入" .smoke-data/boot.log
           grep -q "api_init 完成" .smoke-data/boot.log
           grep -q "监听端口 8765" .smoke-data/boot.log
+
+          # The queue button used to fail silently: the handler wrote no trace,
+          # and the page printed its answer into a different card. Both halves
+          # are asserted here - the request reaches the handler, and the handler
+          # says where it stopped. Not logged in is the expected answer in
+          # smoke, which makes it a stable, cookie-free check of the whole path
+          # (routing, body collection, url-decoding of tab-separated items).
+          echo "--- add endpoint reaches the handler ---"
+          curl -sS -X POST --data 'items=abc%09file.bin%09f' "$base/api/quark/add"
+          echo
+          grep -q "add: 收到请求" .smoke-data/boot.log
+          grep -q "add: 会话无效" .smoke-data/boot.log
+
+          echo "--- queue feedback lives in the browse card ---"
+          grep -q 'id="qAddMsg"' index.html
+          grep -q 'function qaMsg' index.html
 
           echo "--- exit ---"
           curl -fsS -X POST "$base/api/exit"
