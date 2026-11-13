@@ -31,6 +31,14 @@ static char g_data[512];
 static char g_raw[QUARK_RAW_MAX + 1];
 static char g_err[300];
 
+/* The cookie the links in hand were minted with, and the switch that makes
+ * call() fold a rotation into it. Only quark_direct_many turns the switch on,
+ * and only for the one call that matters: every other endpoint rotates __puus
+ * too, but those links are not used for a download, and keeping the stored
+ * session untouched is what makes a failed listing leave no trace behind. */
+static char g_dl_cookie[QUARK_COOKIE_MAX];
+static int g_dl_capture;
+
 /* ------------------------------------------------------------- utilities */
 
 const char *
@@ -41,6 +49,11 @@ quark_last_raw(void) {
 const char *
 quark_last_error(void) {
   return g_err;
+}
+
+const char *
+quark_download_cookie(void) {
+  return g_dl_cookie[0] ? g_dl_cookie : NULL;
 }
 
 /* Keeps the head of a response so a failure can quote what actually arrived.
@@ -667,6 +680,15 @@ call(const quark_session *s, const char *method, const char *path,
     free(buf.p);
     return -1;
   }
+  /* A renewal that arrives with an error status is still the newest value the
+   * service knows, so the merge is not conditional on 200.
+   *
+   * Merged pair by pair: set_cookie is already a jar, and cookie_jar_put would
+   * read it as one Set-Cookie line and drop everything after the first pair -
+   * which is how __puus gets lost while every log line still says "rotated". */
+  if(g_dl_capture && res.set_cookie[0]) {
+    cookie_jar_merge(g_dl_cookie, sizeof(g_dl_cookie), res.set_cookie);
+  }
   keep_raw(buf.p, buf.len);
   if(res.status != 200) {
     snprintf(g_err, sizeof(g_err), "HTTP %d: %.200s", res.status,
@@ -979,6 +1001,7 @@ quark_direct_many(const quark_session *s, const char *const *fids, int n,
   const json_value *data;
   char perr[160];
   int i;
+  int rc;
   int got = 0;
 
   if(n <= 0) {
@@ -1009,12 +1032,22 @@ quark_direct_many(const quark_session *s, const char *const *fids, int n,
   }
   snprintf(body + used, cap - used, "]}");
 
-  if(call(s, "POST", "/1/clouddrive/file/download?" QUARK_COMMON, body, &resp,
-          err, errcap)) {
+  /* Seeded here rather than before the call so a request that never leaves the
+   * machine cannot publish a stale jar as "the one for this batch". */
+  snprintf(g_dl_cookie, sizeof(g_dl_cookie), "%s", s->cookie);
+  g_dl_capture = 1;
+  rc = call(s, "POST", "/1/clouddrive/file/download?" QUARK_COMMON, body, &resp,
+            err, errcap);
+  g_dl_capture = 0;
+  if(rc) {
     free(body);
     return -1;
   }
   free(body);
+  if(strcmp(g_dl_cookie, s->cookie) != 0) {
+    boot_trace("直链: 响应轮换了会话 cookie（%u 字节），下载将用它",
+               (unsigned)strlen(g_dl_cookie));
+  }
   root = json_parse(resp, perr, sizeof(perr));
   if(!root) {
     snprintf(err, errcap, "直链接口解析失败：%s｜原始：%.200s", perr, resp);

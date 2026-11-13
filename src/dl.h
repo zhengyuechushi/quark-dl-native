@@ -44,6 +44,19 @@ int dl_set_default_dir(const char *dir, char *err, size_t cap);
 int dl_add(const char *url, const char *name, const char *dir, char *err,
            size_t cap);
 
+/* The session a quark download has to present, and the last word on it.
+ *
+ * A CDN-hosted quark link answers HTTP 412 to any request that does not look
+ * like the browser download it was minted for, so every quark download carries
+ * the client UA, a pan.quark.cn Referer and this cookie. The caller that owns
+ * the session (the quark layer) sets it after each batch of links, because
+ * quark renews the cookie on exactly that call and the CDN wants the newest
+ * value; NULL clears it on logout.
+ *
+ * The copy is taken here rather than borrowed so the queue never reads a
+ * session the API thread is rewriting. */
+void dl_set_cookie(const char *cookie);
+
 /* Puts a finished task back in the queue. id < 0 retries every finished task.
  * Returns the number of tasks queued. */
 int dl_retry(int id);

@@ -41,6 +41,12 @@ jobs:
           # only the registration path stays readable. The decompressed content is
           # checked by the smoke job, which fetches it over HTTP.
           grep -aqF "/qrcode.js" quark-dl.elf || { echo "qr renderer missing"; exit 1; }
+          # A direct link lives on a CDN that repeats the browser's anti-hotlink
+          # checks. Without the client UA and a pan.quark.cn Referer the answer
+          # is HTTP 412 even for a link that is seconds old, which is exactly
+          # what the console reported before this was added.
+          grep -aqF "quark-cloud-drive/" quark-dl.elf || { echo "download UA missing"; exit 1; }
+          grep -aqF "Referer: https://pan.quark.cn/" quark-dl.elf || { echo "download Referer missing"; exit 1; }
           # The start-up trail. Its absence is how "no process on screen"
           # becomes an unanswerable report.
           grep -aqF "boot.log" quark-dl.elf || { echo "boot log missing"; exit 1; }
@@ -76,6 +82,22 @@ jobs:
 
       - name: Build host binary
         run: make linux BUILD_ID=smoke TLS_PREFIX="$HOME/mbedtls"
+
+      # The download engine needs the session, and it gets it through exactly one
+      # call. A handler that loads the session on its own would leave the queue
+      # without a cookie: the login works, the link resolves, and the download is
+      # refused with 412 - three symptoms that all look like something else.
+      - name: Session cookie reaches the queue
+        run: |
+          set -e
+          if grep -n "quark_load(&s)" src/api.c; then
+            echo "a handler loads the session without publishing it"
+            exit 1
+          fi
+          grep -q "session_load(&s)" src/api.c
+          grep -q "quark_download_cookie" src/api.c
+          grep -q "dl_set_cookie" src/dl.c
+          echo ok
 
       # The page ships inside the ELF, so what it does is invisible until it is
       # on a console - and "I picked a file, pressed the button, nothing
@@ -183,6 +205,9 @@ jobs:
           grep -q "main 进入" .smoke-data/boot.log
           grep -q "api_init 完成" .smoke-data/boot.log
           grep -q "监听端口 8765" .smoke-data/boot.log
+          # Smoke has no login, so the queue must say so out loud. A silent
+          # "no cookie" is what produced 412s that took a build to diagnose.
+          grep -q "下载登录头：没有会话" .smoke-data/boot.log
 
           # The queue button used to fail silently: the handler wrote no trace,
           # and the page printed its answer into a different card. Both halves

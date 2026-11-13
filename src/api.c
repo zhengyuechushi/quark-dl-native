@@ -926,6 +926,19 @@ api_init(void) {
    * downloads.txt so one folder holds everything a reset has to delete. */
   quark_init(data_dir());
   boot_trace("quark_init 完成");
+  /* A queue restored from the last run starts downloading before anyone opens
+   * the page, so the session has to reach it now rather than on the first API
+   * call. Without this, everything queued across a restart asks the CDN for a
+   * file with no login header and is answered 412. */
+  {
+    static quark_session boot_s;
+    const char *ck;
+
+    quark_load(&boot_s);
+    ck = boot_s.valid ? boot_s.cookie : NULL;
+    dl_set_cookie(ck);
+    boot_trace("下载登录头：%s", ck ? "已装载" : "没有会话");
+  }
   /* <data>/ca.pem is the console's only way to add a root: there is no shell to
    * export QDL_CA_FILE from. Missing file is the normal case, not an error. */
   {
@@ -951,6 +964,19 @@ api_set_port(unsigned short port) {
 }
 
 /* ------------------------------------------------------------ quark drive */
+
+/* The one way a handler reads the session off disk.
+ *
+ * It exists for the second line: downloads need the session cookie, and the
+ * queue keeps its own copy so a download thread never reads a struct the API
+ * thread is rewriting. Leaving one handler to call quark_load() directly would
+ * mean a log-in that works, a link that resolves, and a download refused with
+ * HTTP 412 - so the two go together and nothing here calls quark_load alone. */
+static void
+session_load(quark_session *s) {
+  quark_load(s);
+  dl_set_cookie(s->valid ? s->cookie : NULL);
+}
 
 static const char *
 path_arg(struct MHD_Connection *conn, const char *name) {
@@ -1016,7 +1042,7 @@ api_quark_qr(struct MHD_Connection *conn) {
     }
     /* The session is already on disk. The nickname is a nicety: if the call
      * fails the console is still logged in, so it must not turn into an error. */
-    quark_load(&s);
+    session_load(&s);
     if(quark_whoami(&s, err, sizeof(err)) == 0) {
       quark_save(&s);
     }
@@ -1045,7 +1071,7 @@ api_quark_status(struct MHD_Connection *conn) {
   char eerr[520];
   char json[1100];
 
-  quark_load(&s);
+  session_load(&s);
   json_escape(enick, sizeof(enick), s.nickname);
   json_escape(eerr, sizeof(eerr), quark_last_error());
   snprintf(json, sizeof(json),
@@ -1124,6 +1150,10 @@ api_quark_logout(struct MHD_Connection *conn, const char *method) {
     return api_not_found(conn, "/api/quark/logout");
   }
   quark_logout();
+  /* Queued links did not stop being links, but the session they were minted
+   * with is gone; sending the old cookie to the CDN after a logout is the kind
+   * of thing that shows up as a mysterious 412 in a bug report. */
+  dl_set_cookie(NULL);
   return send_json(conn, MHD_HTTP_OK, "{\"ok\":true}");
 }
 
@@ -1151,7 +1181,7 @@ api_quark_list(struct MHD_Connection *conn) {
   int n;
   int i;
 
-  quark_load(&s);
+  session_load(&s);
   if(!s.valid) {
     return send_json(conn, MHD_HTTP_OK,
                      "{\"ok\":false,\"need_login\":true,"
@@ -1303,7 +1333,7 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
     dest[0] = 0;
   }
   first[0] = 0;
-  quark_load(&s);
+  session_load(&s);
   if(!s.valid) {
     free(items);
     free(arr);
@@ -1423,6 +1453,14 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
         base += n;
         continue;
       }
+      /* These links were issued under the cookie *this* call rotated to, which
+       * is what the CDN will check them against. The copy handed to the queue
+       * at load time is one generation older. */
+      {
+        const char *ck = quark_download_cookie();
+
+        dl_set_cookie(ck ? ck : s.cookie);
+      }
       for(i = 0; i < n; i++) {
         if(!urls[i][0]) {
           failed++;
@@ -1484,7 +1522,7 @@ api_quark_probe(struct MHD_Connection *conn) {
   char *out;
   char err[400];
 
-  quark_load(&s);
+  session_load(&s);
   if(!s.valid) {
     return send_json(conn, MHD_HTTP_OK,
                      "{\"ok\":false,\"need_login\":true,"

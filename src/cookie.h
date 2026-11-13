@@ -28,3 +28,13 @@ int cookie_extract(const char *raw, char *out, size_t cap);
  * Login is the only flow that needs this at all - the scan handshake delivers
  * the session in Set-Cookie and nothing else. */
 void cookie_jar_put(char *jar, size_t cap, const char *line);
+
+/* Folds one replayable jar ("a=b; c=d", the shape httpc leaves in
+ * http_result.set_cookie) into another, pair by pair.
+ *
+ * This is not cookie_jar_put with a different name. That function reads a
+ * Set-Cookie header and treats everything after the first semicolon as
+ * attributes, which is right for a header and wrong for a jar: handed a jar it
+ * would update the first pair and silently discard the rest - and the pair it
+ * would discard is usually __puus, the only one the download CDN looks at. */
+void cookie_jar_merge(char *jar, size_t cap, const char *other);

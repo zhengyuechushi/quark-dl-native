@@ -30,7 +30,9 @@
 #include <sys/mount.h>
 #endif
 
+#include "boot.h"
 #include "httpc.h"
+#include "quark.h"
 
 typedef struct {
   int id; /* 0 means the slot is free */
@@ -52,6 +54,12 @@ static int g_next_id = 1;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static char g_data[300] = "/data/quark-dl";
 static char g_dir[300] = "/data/homebrew";
+
+/* "Referer: ...\r\nCookie: ...\r\n" for quark downloads, empty when nobody has
+ * logged in. Written by the API thread, read by the download threads, hence the
+ * queue's lock; a whole session is ~300 bytes in practice, so the copy that a
+ * task takes is cheap next to the file it is about to fetch. */
+static char g_hdr[QUARK_COOKIE_MAX + 96];
 
 static void pump_locked(void);
 static void save_locked(void);
@@ -142,6 +150,43 @@ path_join(char *out, size_t cap, const char *dir, const char *name,
   int n = snprintf(out, cap, "%s/%s%s", dir, name, suffix ? suffix : "");
 
   return (n < 0 || (size_t)n >= cap) ? -1 : 0;
+}
+
+/* A link is not a public file: the CDN behind it repeats the anti-hotlink
+ * checks of the browser download it was minted for, and answers HTTP 412 to a
+ * request that carries none of them. Hence the client UA, a pan.quark.cn
+ * Referer and the session cookie on every quark download.
+ *
+ * The cookie is a login, so it only travels to quark's own hosts and to this
+ * machine. /api/dl/add accepts a URL from anyone who can reach the port, and an
+ * unconditional header would turn that into a way to read the session off your
+ * own server. Loopback is trusted because that is where the download tests
+ * point their mock server. */
+static int
+quark_host(const char *url) {
+  int tls = 0;
+  unsigned short port = 0;
+  char host[200];
+  char path[900];
+
+  if(!url ||
+     http_url_parse(url, &tls, host, sizeof(host), &port, path, sizeof(path))) {
+    return 0;
+  }
+  if(strstr(host, "quark")) {
+    return 1;
+  }
+  return !strcmp(host, "127.0.0.1") || !strcmp(host, "localhost") ||
+         !strcmp(host, "::1");
+}
+
+/* The header block the API thread last published, copied under the lock so a
+ * download that takes a minute never holds it. */
+static void
+hdr_snapshot(char *out, size_t cap) {
+  pthread_mutex_lock(&g_lock);
+  snprintf(out, cap, "%s", g_hdr);
+  pthread_mutex_unlock(&g_lock);
 }
 
 static void
@@ -351,6 +396,12 @@ typedef struct {
   http_result *res;
   long long have;
   int first;
+  /* The first bytes of a non-success body. Discarded either way - an error page
+   * is not file content - but kept long enough to be written to boot.log,
+   * because a CDN's refusal explains itself in those bytes ("hotlink denied",
+   * a JSON code) and "HTTP 412" alone is a dead end. */
+  char errbody[220];
+  size_t errlen;
 } sink_ctx;
 
 static int
@@ -362,6 +413,15 @@ sink_write(void *ctx, const void *data, size_t len) {
    * XML error document at the head of a .part file, and a later resume would
    * happily append the real bytes behind it. */
   if(s->res->status >= 300) {
+    size_t room = sizeof(s->errbody) - 1 - s->errlen;
+
+    if(room > 0) {
+      size_t n = len < room ? len : room;
+
+      memcpy(s->errbody + s->errlen, data, n);
+      s->errlen += n;
+      s->errbody[s->errlen] = 0;
+    }
     return 0;
   }
   if(s->first) {
@@ -403,6 +463,11 @@ dl_attempt(dl_task *t) {
   long long have = 0;
   long long free_bytes;
   int fd;
+  /* Off the heap and off the queue's lock: a task reads its header block once,
+   * then spends minutes streaming. Threads here are pthread_create'd, so a few
+   * more kilobytes of frame is not the hazard it is inside the web server. */
+  char hdrs[QUARK_COOKIE_MAX + 96];
+  int isq;
 
   if(path_join(part, sizeof(part), t->dir, t->name, ".part") ||
      path_join(final, sizeof(final), t->dir, t->name, "")) {
@@ -450,6 +515,20 @@ dl_attempt(dl_task *t) {
   req.write_ctx = &sink;
   req.abort = &t->cancel;
   req.timeout_ms = 15000;
+  hdr_snapshot(hdrs, sizeof(hdrs));
+  isq = quark_host(t->url);
+  if(isq) {
+    req.user_agent = QUARK_DL_UA;
+    if(hdrs[0]) {
+      req.extra_headers = hdrs;
+    }
+  }
+  /* One line per attempt, because the interesting failure here is invisible
+   * from the queue: a link that resolves fine and then downloads nothing. With
+   * the header state and the resume offset on the record, boot.log says whether
+   * the CDN was given the three things it asks for. */
+  boot_trace("下载 %s：续传 %lld 字节，登录头=%s", t->name, have,
+             isq ? (hdrs[0] ? "是" : "否（没有会话 cookie）") : "不需要");
 
   t->done = have;
   if(http_perform(&req, &res) < 0) {
@@ -477,11 +556,22 @@ dl_attempt(dl_task *t) {
      res.status == 404 || res.status == 410) {
     close(fd);
     snprintf(t->err, sizeof(t->err), "HTTP %d：链接无效或已过期", res.status);
+    boot_trace("下载失败 %s：HTTP %d %.180s", t->name, res.status,
+               sink.errbody);
     return -3;
   }
   if(res.status != 200 && res.status != 206) {
     close(fd);
-    snprintf(t->err, sizeof(t->err), "HTTP %d", res.status);
+    /* 412 is the CDN's anti-hotlink answer: the link is fine, the request did
+     * not look like the browser download it was minted for. Named apart from a
+     * generic status because the fix is not "retry", it is the headers. */
+    if(res.status == 412) {
+      snprintf(t->err, sizeof(t->err), "HTTP 412：CDN 要求带登录头，链接被拒");
+    } else {
+      snprintf(t->err, sizeof(t->err), "HTTP %d", res.status);
+    }
+    boot_trace("下载失败 %s：HTTP %d %.180s", t->name, res.status,
+               sink.errbody);
     return -1;
   }
   if(fsync(fd) != 0) {
@@ -579,6 +669,19 @@ pump_locked(void) {
 }
 
 /* ------------------------------------------------------------ public API */
+
+void
+dl_set_cookie(const char *cookie) {
+  pthread_mutex_lock(&g_lock);
+  if(cookie && *cookie) {
+    snprintf(g_hdr, sizeof(g_hdr), "Referer: " QUARK_DL_REFERER "\r\n"
+                                   "Cookie: %s\r\n",
+             cookie);
+  } else {
+    g_hdr[0] = 0;
+  }
+  pthread_mutex_unlock(&g_lock);
+}
 
 int
 dl_init(const char *data_dir) {

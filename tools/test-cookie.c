@@ -172,6 +172,30 @@ test_jar(void) {
     jar_case("junk ignored", l, 3, "__uid=");
   }
   {
+    /* Merging a jar is not merging one Set-Cookie line. The download endpoint
+     * renews the session and httpc hands the result back already folded, so a
+     * jar-in-jar merge that treated the second pair as an attribute would drop
+     * __puus - the one the CDN checks - and keep reporting success. */
+    char jar[512];
+    const char *rotated = "__pus=new-pus; __puus=new-puus; ctoken=tok";
+
+    snprintf(jar, sizeof(jar), "%s", "__pus=old-pus; __puus=old-puus; _uid=7");
+    cookie_jar_merge(jar, sizeof(jar), rotated);
+    CHECK(strstr(jar, "__pus=new-pus") != NULL, "merge updates the first pair");
+    CHECK(strstr(jar, "__puus=new-puus") != NULL,
+          "merge is not fooled by a folded jar");
+    CHECK(strstr(jar, "ctoken=tok") != NULL, "merge adds pairs it did not have");
+    CHECK(strstr(jar, "_uid=7") != NULL, "merge keeps pairs it was not given");
+    CHECK(strstr(jar, "old-puus") == NULL, "merge leaves no stale value behind");
+  }
+  {
+    char jar[512];
+
+    snprintf(jar, sizeof(jar), "%s", "__puus=fixed");
+    cookie_jar_merge(jar, sizeof(jar), "  ; ;");
+    CHECK(strcmp(jar, "__puus=fixed") == 0, "empty merge changes nothing");
+  }
+  {
     /* Overflow must not leave a truncated value behind, which would be invalid
      * on the wire rather than merely useless. */
     char jar[64];

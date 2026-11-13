@@ -21,6 +21,24 @@
  * apart from a phone, and a request without them can be answered differently. */
 #define QUARK_COMMON "pr=ucpro&fr=pc"
 
+/* What a direct link has to be *fetched* with.
+ *
+ * A download URL is not a public file: the CDN behind it (dl-pc-*.drive.quark.cn
+ * and the quarkcdn.com mirrors) repeats the anti-hotlink checks of the browser
+ * download the link was minted for. A request without the client UA, without a
+ * pan.quark.cn Referer, or without the session cookie is answered HTTP 412 -
+ * "precondition failed" - even though the link is valid and seconds old. That
+ * is the same wall aria2 and Motrix users hit when they paste a link into a
+ * command line, and it is why the download engine sends all three.
+ *
+ * The UA is the PC client's own: the value the working exFAT build shipped, and
+ * the one every public quark downloader uses. */
+#define QUARK_DL_UA                                                       \
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "         \
+  "(KHTML, like Gecko) quark-cloud-drive/3.14.2 Chrome/112.0.5615.165 "   \
+  "Electron/24.1.3.8 Safari/537.36 Channel/pckk_other_ch"
+#define QUARK_DL_REFERER "https://pan.quark.cn/"
+
 typedef struct {
   char cookie[QUARK_COOKIE_MAX];
   char nickname[64];
@@ -101,6 +119,16 @@ int quark_direct(const quark_session *s, const char *fid, char *url, size_t cap,
  * cannot download is skipped rather than failing the whole batch. */
 int quark_direct_many(const quark_session *s, const char *const *fids, int n,
                       char urls[][QUARK_URL_MAX], char *err, size_t errcap);
+
+/* The cookie the links from the last quark_direct_many were minted with: the
+ * stored session with whatever that call rotated into Set-Cookie folded in.
+ *
+ * This is not the same string as session.cookie. Quark renews __puus on the
+ * download endpoint, and the CDN wants the value the link was issued with; a
+ * download that presents the older one is refused. The exFAT build learned this
+ * first (it passes `link.cookie` rather than the login cookie to its downloader)
+ * and so does every quark downloader in the wild. NULL before the first batch. */
+const char *quark_download_cookie(void);
 
 /* Walks a directory tree breadth-first and calls back for every file found.
  * Folders nested deeper than depth_limit are skipped rather than silently

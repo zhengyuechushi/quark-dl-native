@@ -228,3 +228,32 @@ cookie_jar_put(char *jar, size_t cap, const char *line) {
   }
   memcpy(jar + used, pair, plen + 1);
 }
+
+void
+cookie_jar_merge(char *jar, size_t cap, const char *other) {
+  char pair[1024];
+
+  if(!jar || !cap || !other) return;
+  while(*other) {
+    const char *sep = strchr(other, ';');
+    size_t n = sep ? (size_t)(sep - other) : strlen(other);
+
+    while(n && (*other == ' ' || *other == '\t')) {
+      other++;
+      n--;
+    }
+    while(n && (other[n - 1] == ' ' || other[n - 1] == '\t' ||
+                other[n - 1] == '\r' || other[n - 1] == '\n')) {
+      n--;
+    }
+    /* Longer than the slot means a value this client cannot store whole;
+     * writing a truncated one would look like a session and fail like one. */
+    if(n && n < sizeof(pair)) {
+      memcpy(pair, other, n);
+      pair[n] = 0;
+      cookie_jar_put(jar, cap, pair);
+    }
+    if(!sep) break;
+    other = sep + 1;
+  }
+}

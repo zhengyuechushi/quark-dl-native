@@ -81,6 +81,12 @@ curl -fsS "http://127.0.0.1:${PLAIN_PORT}/echo" >/dev/null || fail "plain mock d
 # ------------------------------------------------------------------ app ----
 
 say "start quark-dl"
+# Nothing in this script can log in to quark, so the file the login would have
+# written is planted here. It is what /hotlink below checks for: the download
+# engine only ever sees a cookie through the boot path or dl_set_cookie(), and
+# planting it before start is what proves the boot path publishes it.
+printf '__pus=test-session; __puus=test-puus; _uid=1000; __kp=test-kp' \
+  >"$DATA/cookie.txt"
 QDL_DATA_DIR="$DATA" QDL_DEFAULT_DIR="$DEST" QDL_CA_FILE="$WORK/good-ca.pem" \
   "$BIN" >"$WORK/server.log" 2>&1 &
 APP_PID=$!
@@ -177,8 +183,27 @@ wait_state "$ID" done
 cmp "$expected" "$DEST/file" || fail "downloaded file differs"
 echo "file ok: $(wc -c <"$DEST/file") bytes"
 
-say "resume: a pre-seeded .part must produce a Range request"
-head -c 120000 "$expected" >"$DEST/slow.part"
+say "a quark CDN link is refused without UA, Referer and cookie"
+# The mock's negative control first: without the three headers it must answer
+# 412, or the positive case below would pass for the wrong reason.
+code=$(curl -s -o /dev/null -w '%{http_code}' \
+  "http://127.0.0.1:${PLAIN_PORT}/hotlink?size=1000")
+[[ "$code" == 412 ]] || fail "hotlink mock not enforcing (got $code, want 412)"
+curl -fsS -X POST --data-urlencode "url=http://127.0.0.1:${PLAIN_PORT}/hotlink?size=40000" \
+  --data-urlencode "dir=$DEST" "$BASE/api/dl/add" >"$WORK/add-hot.json"
+IDH=$(python3 -c "import json;print(json.load(open('$WORK/add-hot.json'))['ids'][0])")
+wait_state "$IDH" done
+payload 40000 >"$WORK/expected-hot.bin"
+cmp "$WORK/expected-hot.bin" "$DEST/hotlink" || fail "hotlink file differs"
+grep -q "HOTLINK referer='https://pan.quark.cn/'" "$WORK/mock.log" \
+  || fail "download did not send the quark Referer"
+grep -q "HOTLINK.*__puus=test-puus" "$WORK/mock.log" \
+  || fail "download did not send the session cookie"
+grep -q "HOTLINK.*quark-cloud-drive" "$WORK/mock.log" \
+  || fail "download did not send the client UA"
+echo "412 without the headers, 200 with them, 40000 bytes matched"
+
+say "resume: a pre-seeded .part must produce a Range request"head -c 120000 "$expected" >"$DEST/slow.part"
 curl -fsS -X POST --data-urlencode "url=http://127.0.0.1:${PLAIN_PORT}/slow?size=300000" \
   --data-urlencode "dir=$DEST" "$BASE/api/dl/add" >"$WORK/add2.json"
 ID2=$(python3 -c "import json;print(json.load(open('$WORK/add2.json'))['ids'][0])")

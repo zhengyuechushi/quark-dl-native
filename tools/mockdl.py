@@ -75,7 +75,31 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(body)
             return
 
-        if path not in ('/file', '/slow', '/chunked'):
+        # A stand-in for a quark CDN link: the bytes are public, the request is
+        # not. Anything without the three headers a browser download carries is
+        # answered 412 and stays unanswered - which is exactly the wall the
+        # console hit, and the only way to test the fix off-hardware.
+        if path.startswith('/hotlink'):
+            referer = self.headers.get('Referer', '')
+            cookie = self.headers.get('Cookie', '')
+            agent = self.headers.get('User-Agent', '')
+            sys.stderr.write('HOTLINK referer=%r cookie=%r ua=%r\n'
+                             % (referer, cookie[:60], agent[:120]))
+            sys.stderr.flush()
+            if (not referer.startswith('https://pan.quark.cn/')
+                    or '__puus' not in cookie
+                    or 'quark-cloud-drive' not in agent):
+                body = b'{"status":412,"message":"hotlink denied"}'
+                self.send_response(412)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Connection', 'close')
+                self.end_headers()
+                if not head_only:
+                    self.wfile.write(body)
+                return
+
+        if path not in ('/file', '/slow', '/chunked', '/hotlink'):
             self.send_response(404)
             self.send_header('Content-Length', '0')
             self.send_header('Connection', 'close')
