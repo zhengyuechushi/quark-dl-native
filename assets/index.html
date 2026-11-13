@@ -1034,9 +1034,11 @@
   function pollLog() {
     var box = el('logBox');
     if (!box) return;
-    json('GET', '/api/log' + (logOld ? '?old=1' : ''), null, function (err, data) {
+    /* /api/log answers text/plain, not JSON - feed it to request() so the raw
+     * trail is shown as-is. json() would JSON.parse it and fail on the first
+     * line that is not an object. */
+    request('GET', '/api/log' + (logOld ? '?old=1' : ''), null, function (err, data) {
       if (err) { box.textContent = '读取日志失败：' + err.message; return; }
-      if (typeof data !== 'string') { box.textContent = '日志接口返回了意外内容'; return; }
       box.textContent = data;
       /* Stay pinned to the newest line: the trail grows downward. */
       box.scrollTop = box.scrollHeight;
