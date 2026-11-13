@@ -5,7 +5,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [[ "${1:-}" != --inside ]]; then
-  docker build -t quark-dl-native ps5
+  # The context is the repo root: the Dockerfile copies install-libmicrohttpd.sh from it.
+  docker build -t quark-dl-native -f ps5/Dockerfile .
   exec docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
     -e BUILD_ID="${BUILD_ID:-local}" \
     -v "$PWD:/work" quark-dl-native bash ps5/build.sh --inside
