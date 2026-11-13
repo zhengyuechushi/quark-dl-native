@@ -21,6 +21,7 @@ along with this program; see the file COPYING. If not, see
 #include <microhttpd.h>
 
 #include "asset.h"
+#include "boot.h"
 #include "websrv.h"
 
 
@@ -68,7 +69,20 @@ asset_normalize_path(const char *url, char* path) {
 void
 asset_register(const char* path, const void* data, size_t size,
                const char* mime, const char* encoding) {
+  static int announced = 0;
   asset_t* a = calloc(1, sizeof(asset_t));
+
+  /* This runs from a constructor, i.e. before main and before any notification.
+   * One line here is the only difference between "the ELF was never loaded" and
+   * "it loaded and died later", which look identical on the console. */
+  if(!announced) {
+    announced = 1;
+    boot_trace("ELF 已加载, 构造函数执行, 首个资源 %s", path);
+  }
+
+  if(!a) {
+    return;
+  }
 
   a->path = path;
   a->mime = mime;

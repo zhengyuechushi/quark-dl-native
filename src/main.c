@@ -11,6 +11,7 @@
  */
 
 #include <signal.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +28,7 @@
 #endif
 
 #include "api.h"
+#include "boot.h"
 #include "build.h"
 #include "dl.h"
 #include "notify.h"
@@ -148,6 +150,14 @@ main(int argc, char **argv) {
    * made the rename look impossible. */
   syscall(SYS_thr_set_name, -1, PROCESS_NAME);
 
+  /* From here on every step leaves a line in <data>/boot.log. The case this
+   * exists for is the one where nothing happens at all: no process, no
+   * notification, no page. The file then says whether the ELF never loaded,
+   * died during init, or is serving somewhere else. */
+  boot_reset();
+  boot_trace("main 进入, build %s, pid %d", BUILD_ID, (int)getpid());
+  boot_watch_signals();
+
   /* One instance per console. A stale copy that moved to the next port would
    * otherwise keep serving an older build, and requests sent to the announced
    * port could land on it instead. Bounded on purpose: if the kernel will not
@@ -157,12 +167,15 @@ main(int argc, char **argv) {
     if((pid = find_pid(PROCESS_NAME)) <= 0) {
       break;
     }
+    boot_trace("发现旧实例 pid %d, 正在结束", (int)pid);
     if(kill(pid, SIGKILL)) {
       perror("kill");
+      boot_trace("结束旧实例失败: %s", strerror(errno));
       break;
     }
     sleep(1);
   }
+  boot_trace("旧实例清理结束");
 #endif
 
   puts(PROCESS_NAME);
@@ -172,13 +185,16 @@ main(int argc, char **argv) {
   signal(SIGPIPE, SIG_IGN);
   signal(SIGCHLD, SIG_IGN);
 
+  boot_trace("api_init 开始");
   api_init();
+  boot_trace("api_init 完成");
 
   while(1) {
     port = find_available_port(DEFAULT_PORT, PORT_SPAN);
     if(!port) {
       fprintf(stderr, "no available port in %u..%u\n", DEFAULT_PORT,
               DEFAULT_PORT + PORT_SPAN);
+      boot_trace("端口 %u..%u 全被占用", DEFAULT_PORT, DEFAULT_PORT + PORT_SPAN);
       /* Nothing to serve on: say so out loud instead of retrying forever with
        * no evidence, then keep trying in case the other plugin exits. */
       notify_user("Quark DL %s\n端口 %u..%u 全被占用\n无法启动服务",
@@ -189,6 +205,7 @@ main(int argc, char **argv) {
 
     printf("listening on port %u\n", (unsigned)port);
     fflush(stdout);
+    boot_trace("监听端口 %u", (unsigned)port);
     api_set_port(port);
 
 #ifdef __SCE__
@@ -196,10 +213,12 @@ main(int argc, char **argv) {
       notify_user("Quark DL %s\n端口: %u\n进程: %s",
                   BUILD_ID, (unsigned)port, PROCESS_NAME);
       notified_port = port;
+      boot_trace("通知已发出");
     }
 #endif
 
     websrv_listen(port);
+    boot_trace("websrv_listen 返回, stop=%d", websrv_stop_requested());
     if(websrv_stop_requested()) {
       break;
     }
@@ -210,6 +229,7 @@ main(int argc, char **argv) {
 
   printf("exiting on request\n");
   fflush(stdout);
+  boot_trace("收到退出请求");
   /* Let running downloads see the flag and flush their progress: a restart then
    * continues from the .part instead of starting the file again. */
   dl_shutdown();

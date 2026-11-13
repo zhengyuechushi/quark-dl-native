@@ -19,6 +19,8 @@
 
 #include "api.h"
 
+#include "boot.h"
+
 #include <dirent.h>
 #include <errno.h>
 #include <pthread.h>
@@ -404,7 +406,7 @@ api_net_selftest(struct MHD_Connection *conn) {
   long long t_http = 0;
   int dns_ok;
   int http_ok = 0;
-  http_result res;
+  static __thread http_result res;
   http_req req;
 
   /* The default has to be a host that actually serves a valid certificate, or
@@ -912,11 +914,17 @@ api_init(void) {
 
   if(net_init(err, sizeof(err)) != 0) {
     fprintf(stderr, "quark-dl: 网络层初始化失败: %s\n", err);
+    boot_trace("网络层初始化失败: %s", err);
+  } else {
+    boot_trace("网络层就绪");
   }
+  boot_trace("dl_init 开始 (%s)", data_dir());
   dl_init(data_dir());
+  boot_trace("dl_init 完成");
   /* Same directory as the queue: cookie.txt and account.txt sit next to
    * downloads.txt so one folder holds everything a reset has to delete. */
   quark_init(data_dir());
+  boot_trace("quark_init 完成");
   /* <data>/ca.pem is the console's only way to add a root: there is no shell to
    * export QDL_CA_FILE from. Missing file is the normal case, not an error. */
   {
@@ -957,7 +965,11 @@ api_quark_qr(struct MHD_Connection *conn) {
   char eerr[700];
   char enick[260];
   char json[1600];
-  quark_session s;
+  /* Per-thread rather than per-frame: this struct carries a 7 KB cookie, and
+   * these handlers run on libmicrohttpd worker threads whose stack is small
+   * and not ours to set. Each thread serves one connection at a time, so a
+   * thread-local copy is as private as a stack copy and costs no stack. */
+  static __thread quark_session s;
 
   if(!act || !strcmp(act, "start")) {
     char url[600];
@@ -1019,7 +1031,11 @@ api_quark_qr(struct MHD_Connection *conn) {
 
 static enum MHD_Result
 api_quark_status(struct MHD_Connection *conn) {
-  quark_session s;
+  /* Per-thread rather than per-frame: this struct carries a 7 KB cookie, and
+   * these handlers run on libmicrohttpd worker threads whose stack is small
+   * and not ours to set. Each thread serves one connection at a time, so a
+   * thread-local copy is as private as a stack copy and costs no stack. */
+  static __thread quark_session s;
   char enick[260];
   char eerr[520];
   char json[1100];
@@ -1049,7 +1065,11 @@ api_quark_login(struct MHD_Connection *conn, const char *body, size_t size) {
   char keys[400];
   char ekeys[500];
   char json[2400];
-  quark_session s;
+  /* Per-thread rather than per-frame: this struct carries a 7 KB cookie, and
+   * these handlers run on libmicrohttpd worker threads whose stack is small
+   * and not ours to set. Each thread serves one connection at a time, so a
+   * thread-local copy is as private as a stack copy and costs no stack. */
+  static __thread quark_session s;
   int nkeys = 0;
   int saved;
 
@@ -1104,7 +1124,11 @@ static enum MHD_Result
 api_quark_list(struct MHD_Connection *conn) {
   const char *pdir = path_arg(conn, "pdir");
   const char *pages = path_arg(conn, "page");
-  quark_session s;
+  /* Per-thread rather than per-frame: this struct carries a 7 KB cookie, and
+   * these handlers run on libmicrohttpd worker threads whose stack is small
+   * and not ours to set. Each thread serves one connection at a time, so a
+   * thread-local copy is as private as a stack copy and costs no stack. */
+  static __thread quark_session s;
   quark_entry *entries;
   char err[400];
   char eerr[900];
@@ -1220,7 +1244,11 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
   char eerr[700];
   char first[400];
   char json[1600];
-  quark_session s;
+  /* Per-thread rather than per-frame: this struct carries a 7 KB cookie, and
+   * these handlers run on libmicrohttpd worker threads whose stack is small
+   * and not ours to set. Each thread serves one connection at a time, so a
+   * thread-local copy is as private as a stack copy and costs no stack. */
+  static __thread quark_session s;
   collect_ctx cc;
   add_item *arr;
   char *line;
@@ -1399,7 +1427,11 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
 static enum MHD_Result
 api_quark_probe(struct MHD_Connection *conn) {
   const char *path = path_arg(conn, "path");
-  quark_session s;
+  /* Per-thread rather than per-frame: this struct carries a 7 KB cookie, and
+   * these handlers run on libmicrohttpd worker threads whose stack is small
+   * and not ours to set. Each thread serves one connection at a time, so a
+   * thread-local copy is as private as a stack copy and costs no stack. */
+  static __thread quark_session s;
   char *out;
   char err[400];
 

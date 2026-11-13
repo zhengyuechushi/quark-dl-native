@@ -398,7 +398,7 @@ dl_attempt(dl_task *t) {
   char final[520];
   struct stat st;
   sink_ctx sink;
-  http_result res;
+  static __thread http_result res;
   http_req req;
   long long have = 0;
   long long free_bytes;

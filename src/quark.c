@@ -1,5 +1,7 @@
 #include "quark.h"
 
+#include "boot.h"
+
 #include "cookie.h"
 #include "httpc.h"
 #include "json.h"
@@ -428,7 +430,7 @@ quark_qr_new(char *url, size_t urlcap, char *token, size_t tokcap, char *err,
   char rid[64];
   char jerr[120];
   char *body = NULL;
-  http_result meta;
+  static __thread http_result meta;
   json_value *v;
   const char *t;
   long long code;
@@ -477,14 +479,21 @@ quark_qr_new(char *url, size_t urlcap, char *token, size_t tokcap, char *err,
 static int
 qr_exchange(const char *ticket, quark_session *s, char *err, size_t errcap) {
   char url[900];
-  http_result meta;
+  static __thread http_result meta;
 
   snprintf(url, sizeof(url), QUARK_ORIGIN "/account/info?st=%s&lw=scan",
            ticket);
+  /* The ticket itself never reaches the log: it is a one-shot credential and
+   * this file is readable over FTP. Its length is enough to tell "empty" from
+   * "truncated". */
+  boot_trace("换会话: 票据 %d 字节, 请求 %s", (int)strlen(ticket), QUARK_ORIGIN);
   if(fetch(url, NULL, "text/html,application/json,*/*", NULL, &meta, err,
            errcap)) {
+    boot_trace("换会话失败: %s", err);
     return -1;
   }
+  boot_trace("换会话返回 status=%d, Set-Cookie %d 字节", meta.status,
+             (int)strlen(meta.set_cookie));
   if(!meta.set_cookie[0]) {
     snprintf(err, errcap, "登录响应里没有 Set-Cookie，扫码未生效");
     return -1;
@@ -505,9 +514,11 @@ qr_exchange(const char *ticket, quark_session *s, char *err, size_t errcap) {
    * round trip for information the caller already has. */
   s->verified = 1;
   if(quark_save(s)) {
+    boot_trace("写 cookie.txt 失败");
     snprintf(err, errcap, "会话已拿到但写入 cookie.txt 失败");
     return -1;
   }
+  boot_trace("登录完成, 会话 %d 字节已落盘", (int)strlen(s->cookie));
   return 0;
 }
 
@@ -518,7 +529,7 @@ quark_qr_poll(const char *token, quark_session *s, char *err, size_t errcap) {
   char jerr[120];
   char ticket[600];
   char *body = NULL;
-  http_result meta;
+  static __thread http_result meta;
   json_value *v;
   const char *t;
   long long code;
@@ -587,9 +598,10 @@ static int
 call(const quark_session *s, const char *method, const char *path,
      const char *body, char **out, char *err, size_t errcap) {
   char url[1600];
-  char headers[QUARK_COOKIE_MAX + 640];
+  /* 7 KB of Cookie header, same reasoning as the session above. */
+  static __thread char headers[QUARK_COOKIE_MAX + 640];
   http_req req;
-  http_result res;
+  static __thread http_result res;
   body_buf buf;
   int rc;
   char *q;

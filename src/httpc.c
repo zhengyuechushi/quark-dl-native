@@ -377,7 +377,11 @@ http_perform(const http_req *req, http_result *out) {
     char path[800];
     char base[320];
     char hosthdr[240];
-    char head[HDR_MAX];
+    /* Not on the stack. The connect path for a scan login nests five deep
+     * (api handler -> poll -> exchange -> fetch -> here) and every frame in it
+     * held a few kilobytes; on a worker thread whose stack is not ours to size,
+     * that is how a program dies exactly one step after showing a QR code. */
+    static __thread char head[HDR_MAX];
     char line[HLINE_MAX];
     size_t used = 0;
     net_conn *c;

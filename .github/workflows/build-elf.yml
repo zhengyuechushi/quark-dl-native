@@ -41,6 +41,9 @@ jobs:
           # only the registration path stays readable. The decompressed content is
           # checked by the smoke job, which fetches it over HTTP.
           grep -aqF "/qrcode.js" quark-dl.elf || { echo "qr renderer missing"; exit 1; }
+          # The start-up trail. Its absence is how "no process on screen"
+          # becomes an unanswerable report.
+          grep -aqF "boot.log" quark-dl.elf || { echo "boot log missing"; exit 1; }
           echo "ok"
 
       - uses: actions/upload-artifact@v4
@@ -161,6 +164,17 @@ jobs:
           WANT=$(sed -n 's/^APP_VERSION := //p' Makefile | tr -d ' ')
           grep -qF "var PAGE_V = '$WANT'" index.html || {
             echo "index.html PAGE_V does not match APP_VERSION=$WANT"; exit 1; }
+
+          echo "--- boot log ---"
+          # The start-up trail is the only evidence a user has when the console
+          # shows no process. If it stops being written, that report becomes
+          # unanswerable again.
+          test -f .smoke-data/boot.log
+          cat .smoke-data/boot.log
+          grep -q "ELF 已加载" .smoke-data/boot.log
+          grep -q "main 进入" .smoke-data/boot.log
+          grep -q "api_init 完成" .smoke-data/boot.log
+          grep -q "监听端口 8765" .smoke-data/boot.log
 
           echo "--- exit ---"
           curl -fsS -X POST "$base/api/exit"
