@@ -31,6 +31,10 @@ cleanup() {
   cat "$WORK/server.log" 2>/dev/null || true
   echo "--- mock log (tail) ---"
   tail -50 "$WORK/mock.log" 2>/dev/null || true
+  echo "--- app boot log (tail) ---"
+  tail -40 "$DATA/boot.log" 2>/dev/null || true
+  echo "--- destination ---"
+  ls -l "$DEST" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -203,7 +207,9 @@ grep -q "HOTLINK.*quark-cloud-drive" "$WORK/mock.log" \
   || fail "download did not send the client UA"
 echo "412 without the headers, 200 with them, 40000 bytes matched"
 
-say "resume: a pre-seeded .part must produce a Range request"head -c 120000 "$expected" >"$DEST/slow.part"
+say "resume: a pre-seeded .part must produce a Range request"
+head -c 120000 "$expected" >"$DEST/slow.part"
+printf 'slow.part seeded with %s bytes\n' "$(wc -c <"$DEST/slow.part")"
 curl -fsS -X POST --data-urlencode "url=http://127.0.0.1:${PLAIN_PORT}/slow?size=300000" \
   --data-urlencode "dir=$DEST" "$BASE/api/dl/add" >"$WORK/add2.json"
 ID2=$(python3 -c "import json;print(json.load(open('$WORK/add2.json'))['ids'][0])")
