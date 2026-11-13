@@ -19,15 +19,21 @@
 
 #include "api.h"
 
+#include <dirent.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "build.h"
+#include "dl.h"
+#include "httpc.h"
 #include "kern.h"
+#include "net.h"
 #include "notify.h"
 #include "websrv.h"
 
@@ -211,13 +217,17 @@ api_diag_json(struct MHD_Connection *conn) {
   char kernel[384];
   char host[160];
   char last[160];
-  char body[2048];
+  char tls[420];
+  char qdir[700];
+  char body[3072];
   diag_view_t d;
 
   collect_diag(&d);
   json_escape(kernel, sizeof(kernel), d.kernel);
   json_escape(host, sizeof(host), d.host);
   json_escape(last, sizeof(last), d.last);
+  json_escape(tls, sizeof(tls), net_status());
+  json_escape(qdir, sizeof(qdir), dl_default_dir());
 
   snprintf(body, sizeof(body),
            "{\"app\":\"%s\",\"version\":\"%s\",\"build\":\"%s\","
@@ -225,7 +235,9 @@ api_diag_json(struct MHD_Connection *conn) {
            "\"name\":{\"expected\":\"%s\",\"kernel\":\"%s\",\"readable\":%s,"
            "\"ok\":%s,\"instances\":%d},"
            "\"host\":\"%s\",\"requests\":%u,\"last_request\":\"%s\","
-           "\"exiting\":%s}",
+           "\"exiting\":%s,"
+           "\"net\":{\"tls\":\"%s\",\"resolver\":\"%s\"},"
+           "\"dl\":{\"running\":%d,\"tasks\":%d,\"dir\":\"%s\"}}",
            APP_NAME, APP_VERSION, d.build,
            d.pid, d.ppid, d.port, d.uptime,
            PROCESS_NAME, kernel,
@@ -233,7 +245,9 @@ api_diag_json(struct MHD_Connection *conn) {
            (d.named && !strcmp(d.kernel, PROCESS_NAME)) ? "true" : "false",
            d.instances,
            host, d.requests, last,
-           g_exiting ? "true" : "false");
+           g_exiting ? "true" : "false",
+           tls, net_resolver(),
+           dl_running(), dl_count(), qdir);
   return send_json(conn, MHD_HTTP_OK, body);
 }
 
@@ -253,7 +267,10 @@ api_diag_text(struct MHD_Connection *conn) {
            "instances %d\n"
            "uptime    %ld ms\n"
            "requests  %u, last %s\n"
-           "exiting   %s\n",
+           "exiting   %s\n"
+           "tls       %s\n"
+           "resolver  %s\n"
+           "downloads %d running, %d known -> %s\n",
            APP_NAME, APP_VERSION,
            d.build,
            d.pid, d.ppid,
@@ -263,7 +280,9 @@ api_diag_text(struct MHD_Connection *conn) {
            d.instances,
            d.uptime,
            d.requests, d.last[0] ? d.last : "-",
-           g_exiting ? "yes" : "no");
+           g_exiting ? "yes" : "no",
+           net_status(), net_resolver(),
+           dl_running(), dl_count(), dl_default_dir());
   return send_body(conn, MHD_HTTP_OK, API_TEXT, body);
 }
 
@@ -271,12 +290,16 @@ static enum MHD_Result
 api_diag_html(struct MHD_Connection *conn) {
   char kernel[512];
   char host[160];
-  char body[4096];
+  char tls[600];
+  char qdir[900];
+  char body[6144];
   diag_view_t d;
 
   collect_diag(&d);
   html_escape(kernel, sizeof(kernel), d.kernel);
   html_escape(host, sizeof(host), d.host);
+  html_escape(tls, sizeof(tls), net_status());
+  html_escape(qdir, sizeof(qdir), dl_default_dir());
 
   snprintf(body, sizeof(body),
            "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
@@ -309,7 +332,11 @@ api_diag_html(struct MHD_Connection *conn) {
            "<tr><td class=\"k\">已运行</td><td class=\"v\">%ld 秒</td></tr>"
            "<tr><td class=\"k\">同名实例</td><td class=\"v\">%d</td></tr>"
            "<tr><td class=\"k\">已处理请求</td><td class=\"v\">%u</td></tr>"
+           "<tr><td class=\"k\">TLS</td><td class=\"v\">%s</td></tr>"
+           "<tr><td class=\"k\">下载队列</td><td class=\"v\">%d 个进行中 / %d 个任务</td></tr>"
+           "<tr><td class=\"k\">默认保存到</td><td class=\"v\">%s</td></tr>"
            "</table><p class=\"f\">"
+           "<a href=\"/api/net/selftest\">网络自检</a>"
            "<a href=\"/api/diag?format=json\">看 JSON 原始输出</a>"
            "<a href=\"/\">回首页</a>"
            "<a href=\"/api/health\">health</a></p></div></body></html>",
@@ -321,7 +348,10 @@ api_diag_html(struct MHD_Connection *conn) {
            d.build,
            d.uptime / 1000,
            d.instances,
-           d.requests);
+           d.requests,
+           tls,
+           dl_running(), dl_count(),
+           qdir);
   return send_body(conn, MHD_HTTP_OK, API_HTML, body);
 }
 
@@ -337,6 +367,400 @@ api_health(struct MHD_Connection *conn) {
            "\"host\":\"%s\"}",
            APP_NAME, APP_VERSION, BUILD_ID, qdl_self_pid(), (unsigned)g_port,
            elapsed_ms(), PROCESS_NAME, g_host[0] ? g_host : "unknown");
+  return send_json(conn, MHD_HTTP_OK, body);
+}
+
+/* ------------------------------------------------------- stage 2: network -- */
+
+/* Network self-test. This exists because the one question the console cannot
+ * answer on its own is "can this payload reach the internet at all": DNS,
+ * TCP, TLS, certificate and HTTP are five different failures that all look
+ * like "下载失败" from the queue. Naming the stage is the difference between a
+ * fixable report and another round of guessing. */
+static enum MHD_Result
+api_net_selftest(struct MHD_Connection *conn) {
+  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "url");
+  char url[600];
+  char host[200];
+  char path[400];
+  char ip[64];
+  char json[1600];
+  char page[3600];
+  char escaped[1700];
+  unsigned short port = 0;
+  int tls = 0;
+  long long t_dns = 0;
+  long long t_http = 0;
+  int dns_ok;
+  int http_ok = 0;
+  http_result res;
+  http_req req;
+
+  snprintf(url, sizeof(url), "%s",
+           (arg && *arg) ? arg : "https://api.quark.cn/");
+  memset(&res, 0, sizeof(res));
+
+  if(http_url_parse(url, &tls, host, sizeof(host), &port, path, sizeof(path))) {
+    snprintf(json, sizeof(json),
+             "{\"ok\":false,\"url\":\"%.400s\",\"error\":\"URL 无法解析\"}", url);
+    return send_json(conn, MHD_HTTP_BAD_REQUEST, json);
+  }
+
+  {
+    long long mark = elapsed_ms();
+    dns_ok = net_resolve(host, ip, sizeof(ip), NULL) == 0;
+    t_dns = elapsed_ms() - mark;
+  }
+  if(!dns_ok) {
+    snprintf(json, sizeof(json),
+             "{\"ok\":false,\"url\":\"%.400s\",\"stage\":\"dns\",\"host\":\"%s\","
+             "\"error\":\"域名解析失败\",\"resolver\":\"%s\",\"dns_ms\":%lld}",
+             url, host, net_resolver(), t_dns);
+    return send_json(conn, MHD_HTTP_OK, json);
+  }
+
+  memset(&req, 0, sizeof(req));
+  req.url = url;
+  req.method = "GET";
+  req.timeout_ms = 12000;
+  req.max_redirects = 3;
+  {
+    long long mark = elapsed_ms();
+    http_ok = http_perform(&req, &res) == 0;
+    t_http = elapsed_ms() - mark;
+  }
+
+  snprintf(json, sizeof(json),
+           "{\"ok\":%s,\"url\":\"%.400s\",\"host\":\"%s\",\"ip\":\"%s\","
+           "\"resolver\":\"%s\",\"dns_ms\":%lld,\"tls\":\"%s\",\"cert\":\"%s\","
+           "\"cert_expires\":\"%s\",\"status\":%d,\"bytes\":%lld,"
+           "\"connect_ms\":%lld,\"total_ms\":%lld,\"stage\":\"%s\",\"error\":\"%s\"}",
+           http_ok ? "true" : "false", url, host, ip, net_resolver(), t_dns,
+           res.tls_info[0] ? res.tls_info : "plain", res.tls_subject,
+           res.tls_expires, res.status, res.received, res.connect_ms, t_http,
+           http_ok ? "done" : (res.status ? "http" : "connect"),
+           res.err[0] ? res.err : "");
+
+  if(!wants_html(conn)) {
+    return send_json(conn, MHD_HTTP_OK, json);
+  }
+  html_escape(escaped, sizeof(escaped), json);
+  snprintf(page, sizeof(page),
+           "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+           "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+           "<title>Quark DL 网络自检</title><style>"
+           "body{margin:0;padding:24px 18px;background:#0f1115;color:#e8ecf1;"
+           "font:15px/1.6 -apple-system,'Segoe UI','PingFang SC',sans-serif}"
+           "pre{white-space:pre-wrap;word-break:break-all;background:#161a20;"
+           "border:1px solid #232a33;border-radius:12px;padding:16px;font-size:13px}"
+           "a{color:#7aa2ff}</style></head><body>"
+           "<h1 style=\"font-size:20px;margin:0 0 12px\">网络自检</h1>"
+           "<pre>%s</pre><p><a href=\"/\">回首页</a></p></body></html>",
+           escaped);
+  return send_body(conn, MHD_HTTP_OK, API_HTML, page);
+}
+
+/* ---------------------------------------------------- stage 2: form input -- */
+
+static int
+hexval(char c) {
+  if(c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if(c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if(c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  return -1;
+}
+
+static void
+url_decode(char *dst, size_t cap, const char *src, size_t len) {
+  size_t o = 0;
+  size_t i;
+
+  for(i = 0; i < len && o + 1 < cap; i++) {
+    if(src[i] == '+') {
+      dst[o++] = ' ';
+    } else if(src[i] == '%' && i + 2 < len) {
+      int hi = hexval(src[i + 1]);
+      int lo = hexval(src[i + 2]);
+
+      if(hi >= 0 && lo >= 0) {
+        dst[o++] = (char)((hi << 4) | lo);
+        i += 2;
+      } else {
+        dst[o++] = src[i];
+      }
+    } else {
+      dst[o++] = src[i];
+    }
+  }
+  dst[o] = 0;
+}
+
+/* Browser forms are application/x-www-form-urlencoded, and MHD's own POST
+ * processor is not in the picture because the body was consumed by websrv. */
+static int
+form_field(const char *body, size_t len, const char *key, char *out,
+           size_t cap) {
+  size_t klen = strlen(key);
+  size_t i = 0;
+
+  out[0] = 0;
+  if(!body) {
+    return 0;
+  }
+  while(i < len) {
+    size_t start = i;
+    size_t end;
+
+    while(i < len && body[i] != '&') {
+      i++;
+    }
+    end = i;
+    if(i < len) {
+      i++;
+    }
+    if(end > start + klen && !strncmp(body + start, key, klen) &&
+       body[start + klen] == '=') {
+      url_decode(out, cap, body + start + klen + 1,
+                 end - start - klen - 1);
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/* One "url" field may carry a whole list, one per line: the textarea on the
+ * page is the natural place to paste several links at once. */
+static int
+form_urls(const char *body, size_t len, char out[][600], int max) {
+  size_t i = 0;
+  int n = 0;
+
+  while(i < len && n < max) {
+    size_t start = i;
+    size_t end;
+
+    while(i < len && body[i] != '&') {
+      i++;
+    }
+    end = i;
+    if(i < len) {
+      i++;
+    }
+    if(end > start + 4 && !strncmp(body + start, "url=", 4)) {
+      char tmp[1600];
+      char *p = tmp;
+
+      url_decode(tmp, sizeof(tmp), body + start + 4, end - start - 4);
+      while(*p && n < max) {
+        char *nl = strpbrk(p, "\r\n");
+
+        if(nl) {
+          *nl = 0;
+        }
+        while(*p == ' ' || *p == '\t') {
+          p++;
+        }
+        if(*p) {
+          snprintf(out[n], 600, "%s", p);
+          n++;
+        }
+        if(!nl) {
+          break;
+        }
+        p = nl + 1;
+      }
+    }
+  }
+  return n;
+}
+
+/* ------------------------------------------------------- stage 2: the queue */
+
+static enum MHD_Result
+api_dl_list(struct MHD_Connection *conn) {
+  char *body = malloc(96 * 1024);
+
+  if(!body) {
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     "{\"ok\":false,\"error\":\"内存不足\"}");
+  }
+  if(dl_json(body, 96 * 1024) != 0) {
+    free(body);
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     "{\"ok\":false,\"error\":\"队列过大\"}");
+  }
+  {
+    enum MHD_Result ret = send_json(conn, MHD_HTTP_OK, body);
+
+    free(body);
+    return ret;
+  }
+}
+
+static enum MHD_Result
+api_dl_add(struct MHD_Connection *conn, const char *body, size_t size) {
+  char urls[20][600];
+  char name[200];
+  char dir[340];
+  char ids[400];
+  char errors[1200];
+  char msg[200];
+  char reply[2200];
+  size_t idlen = 0;
+  size_t errlen = 0;
+  int added = 0;
+  int n;
+  int i;
+
+  form_field(body, size, "name", name, sizeof(name));
+  form_field(body, size, "dir", dir, sizeof(dir));
+  n = form_urls(body, size, urls, 20);
+  if(!n) {
+    return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                     "{\"ok\":false,\"error\":\"表单里没有 url 字段\"}");
+  }
+
+  ids[0] = 0;
+  errors[0] = 0;
+  for(i = 0; i < n; i++) {
+    int id = dl_add(urls[i], name[0] ? name : NULL, dir[0] ? dir : NULL, msg,
+                    sizeof(msg));
+
+    if(id < 0) {
+      char safe[400];
+
+      json_escape(safe, sizeof(safe), msg);
+      if(errlen + 400 < sizeof(errors)) {
+        errlen += (size_t)snprintf(errors + errlen, sizeof(errors) - errlen,
+                                   "%s{\"url\":\"%.160s\",\"error\":\"%s\"}",
+                                   errlen ? "," : "", urls[i], safe);
+      }
+    } else {
+      added++;
+      if(idlen + 24 < sizeof(ids)) {
+        idlen += (size_t)snprintf(ids + idlen, sizeof(ids) - idlen, "%s%d",
+                                  idlen ? "," : "", id);
+      }
+    }
+  }
+  snprintf(reply, sizeof(reply),
+           "{\"ok\":%s,\"added\":%d,\"ids\":[%s],\"errors\":[%s]}",
+           added ? "true" : "false", added, ids, errors);
+  return send_json(conn, added ? MHD_HTTP_OK : MHD_HTTP_BAD_REQUEST, reply);
+}
+
+static enum MHD_Result
+api_dl_cancel(struct MHD_Connection *conn, const char *method) {
+  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
+  char body[160];
+  int n;
+
+  if(strcmp(method, MHD_HTTP_METHOD_POST)) {
+    return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
+                     "{\"ok\":false,\"error\":\"use POST\"}");
+  }
+  n = (arg && !strcmp(arg, "all")) ? dl_cancel(-1)
+                                   : dl_cancel(arg ? atoi(arg) : -1);
+  snprintf(body, sizeof(body), "{\"ok\":true,\"canceled\":%d}", n);
+  return send_json(conn, MHD_HTTP_OK, body);
+}
+
+static enum MHD_Result
+api_dl_clear(struct MHD_Connection *conn, const char *method) {
+  char body[120];
+
+  if(strcmp(method, MHD_HTTP_METHOD_POST)) {
+    return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
+                     "{\"ok\":false,\"error\":\"use POST\"}");
+  }
+  snprintf(body, sizeof(body), "{\"ok\":true,\"cleared\":%d}",
+           dl_clear_finished());
+  return send_json(conn, MHD_HTTP_OK, body);
+}
+
+static enum MHD_Result
+api_settings(struct MHD_Connection *conn, const char *body, size_t size,
+             const char *method) {
+  char dir[340];
+  char reply[700];
+  char safe[400];
+  char err[220];
+
+  if(!strcmp(method, MHD_HTTP_METHOD_POST)) {
+    if(!form_field(body, size, "dir", dir, sizeof(dir)) || !dir[0]) {
+      return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                       "{\"ok\":false,\"error\":\"缺少 dir 字段\"}");
+    }
+    if(dl_set_default_dir(dir, err, sizeof(err))) {
+      json_escape(safe, sizeof(safe), err);
+      snprintf(reply, sizeof(reply), "{\"ok\":false,\"error\":\"%s\"}", safe);
+      return send_json(conn, MHD_HTTP_BAD_REQUEST, reply);
+    }
+  }
+  json_escape(safe, sizeof(safe), dl_default_dir());
+  snprintf(reply, sizeof(reply),
+           "{\"ok\":true,\"dir\":\"%s\",\"limit\":%d,\"tasks\":%d,\"running\":%d}",
+           safe, DL_LIMIT, dl_count(), dl_running());
+  return send_json(conn, MHD_HTTP_OK, reply);
+}
+
+/* A directory listing, so the page can offer somewhere to save into instead of
+ * asking the user to type a path from memory. */
+static enum MHD_Result
+api_fs_list(struct MHD_Connection *conn) {
+  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "path");
+  char path[340];
+  char body[8192];
+  char safe[400];
+  size_t used = 0;
+  int entries = 0;
+  int truncated = 0;
+  DIR *dir;
+  struct dirent *de;
+
+  snprintf(path, sizeof(path), "%s", (arg && *arg == '/') ? arg : dl_default_dir());
+  dir = opendir(path);
+  json_escape(safe, sizeof(safe), path);
+  if(!dir) {
+    snprintf(body, sizeof(body),
+             "{\"ok\":false,\"path\":\"%s\",\"error\":\"无法打开目录\"}", safe);
+    return send_json(conn, MHD_HTTP_OK, body);
+  }
+  used += (size_t)snprintf(body + used, sizeof(body) - used,
+                           "{\"ok\":true,\"path\":\"%s\",\"entries\":[", safe);
+  while((de = readdir(dir)) != NULL) {
+    struct stat st;
+    char full[600];
+    memset(&st, 0, sizeof(st));
+    char name[400];
+    int is_dir;
+
+    if(!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) {
+      continue;
+    }
+    if(entries >= 200 || used + 400 > sizeof(body)) {
+      truncated = 1;
+      break;
+    }
+    snprintf(full, sizeof(full), "%s/%s", path, de->d_name);
+    is_dir = (stat(full, &st) == 0) ? S_ISDIR(st.st_mode) : 0;
+    json_escape(name, sizeof(name), de->d_name);
+    used += (size_t)snprintf(body + used, sizeof(body) - used,
+                             "%s{\"name\":\"%s\",\"dir\":%s,\"size\":%lld}",
+                             entries ? "," : "", name, is_dir ? "true" : "false",
+                             is_dir ? 0LL : (long long)st.st_size);
+    entries++;
+  }
+  closedir(dir);
+  used += (size_t)snprintf(body + used, sizeof(body) - used,
+                           "],\"count\":%d,\"truncated\":%s}", entries,
+                           truncated ? "true" : "false");
   return send_json(conn, MHD_HTTP_OK, body);
 }
 
@@ -416,13 +840,34 @@ api_not_found(struct MHD_Connection *conn, const char *path) {
 
 /* ------------------------------------------------------------------ entry -- */
 
+/* Where the queue and settings live. The console path matches everything else
+ * this payload writes; the host build keeps its state next to the binary so a
+ * test run cannot read the console's files by accident. */
+static const char *
+data_dir(void) {
+#ifdef __SCE__
+  return "/data/quark-dl";
+#else
+  const char *env = getenv("QDL_DATA_DIR");
+
+  return (env && *env) ? env : "./.quark-dl-data";
+#endif
+}
+
 void
 api_init(void) {
+  char err[220];
+
   clock_gettime(CLOCK_MONOTONIC, &g_started);
   g_exiting = 0;
   g_requests = 0;
   g_last_request[0] = 0;
   g_host[0] = 0;
+
+  if(net_init(err, sizeof(err)) != 0) {
+    fprintf(stderr, "quark-dl: 网络层初始化失败: %s\n", err);
+  }
+  dl_init(data_dir());
 }
 
 void
@@ -438,9 +883,6 @@ api_request(struct MHD_Connection *conn, const char *url, const char *method,
   int is_get = !strcmp(method, MHD_HTTP_METHOD_GET) ||
                !strcmp(method, MHD_HTTP_METHOD_HEAD);
   const char *host;
-
-  (void)body;
-  (void)size;
 
   normalize_path(path, sizeof(path), url);
 
@@ -467,6 +909,28 @@ api_request(struct MHD_Connection *conn, const char *url, const char *method,
   }
   if(!strcmp(path, "/api/exit")) {
     return is_post ? api_exit(conn) : api_exit_needs_post(conn);
+  }
+  if(!strcmp(path, "/api/net/selftest") || !strcmp(path, "/api/net")) {
+    return is_get ? api_net_selftest(conn) : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/dl/list")) {
+    return is_get ? api_dl_list(conn) : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/dl/add")) {
+    return is_post ? api_dl_add(conn, body, size) : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/dl/cancel")) {
+    return api_dl_cancel(conn, method);
+  }
+  if(!strcmp(path, "/api/dl/clear")) {
+    return api_dl_clear(conn, method);
+  }
+  if(!strcmp(path, "/api/settings")) {
+    return (is_get || is_post) ? api_settings(conn, body, size, method)
+                               : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/fs/list")) {
+    return is_get ? api_fs_list(conn) : api_not_found(conn, path);
   }
 
   return api_not_found(conn, path);

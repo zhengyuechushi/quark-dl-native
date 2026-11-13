@@ -28,6 +28,7 @@
 
 #include "api.h"
 #include "build.h"
+#include "dl.h"
 #include "notify.h"
 #include "websrv.h"
 
@@ -209,5 +210,8 @@ main(int argc, char **argv) {
 
   printf("exiting on request\n");
   fflush(stdout);
+  /* Let running downloads see the flag and flush their progress: a restart then
+   * continues from the .part instead of starting the file again. */
+  dl_shutdown();
   return 0;
 }

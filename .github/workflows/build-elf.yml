@@ -8,7 +8,7 @@ on:
 jobs:
   elf:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +27,10 @@ jobs:
           if readelf -l quark-dl.elf | grep -q INTERP; then echo "has INTERP"; exit 1; fi
           grep -aqF "${{ github.sha }}" quark-dl.elf || { echo "build id missing"; exit 1; }
           grep -aqF "quark-dl.elf" quark-dl.elf || { echo "process name missing"; exit 1; }
+          # Stage 2 links TLS and an embedded root store; both must be in the image.
+          grep -aqF "mbedtls" quark-dl.elf || { echo "TLS layer missing"; exit 1; }
+          grep -aqF "BEGIN CERTIFICATE" quark-dl.elf || { echo "root store missing"; exit 1; }
+          grep -aqF "/api/dl/add" quark-dl.elf || { echo "download API missing"; exit 1; }
           echo "ok"
 
       - uses: actions/upload-artifact@v4
@@ -36,27 +40,37 @@ jobs:
           if-no-files-found: error
 
   # The console-specific parts (SYS_thr_set_name, sysctl, notifications) cannot be
-  # tested off-hardware. Everything else — routing, JSON, static assets, and the
-  # /api/exit path that ends main — runs identically on the host build, so it gets
-  # tested here instead of being discovered on the console.
+  # tested off-hardware. Everything else — routing, JSON, static assets, the exit
+  # path that ends main, the download engine and the TLS handshake — runs
+  # identically on the host build, so it is tested here instead of being
+  # discovered on the console.
   linux-smoke:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install host libmicrohttpd
-        run: sudo apt-get update && sudo apt-get install -y libmicrohttpd-dev
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmicrohttpd-dev openssl
+
+      - name: Build mbedTLS for the host
+        run: |
+          MBEDTLS_PREFIX="$HOME/mbedtls" MBEDTLS_CC=cc MBEDTLS_AR=ar \
+            MBEDTLS_RANLIB=ranlib bash install-mbedtls.sh
+          ls -l "$HOME/mbedtls/lib"
 
       - name: Build host binary
-        run: make linux BUILD_ID=smoke
+        run: make linux BUILD_ID=smoke TLS_PREFIX="$HOME/mbedtls"
 
       - name: Endpoints and clean exit
         run: |
           set -e
           PORT=8765
           base="http://127.0.0.1:$PORT"
-          ./quark-dl-linux > server.log 2>&1 &
+          QDL_DATA_DIR="$PWD/.smoke-data" QDL_DEFAULT_DIR="$PWD/.smoke-dl" \
+            ./quark-dl-linux > server.log 2>&1 &
           PID=$!
           for i in $(seq 1 30); do
             if curl -fsS "$base/api/health" > /dev/null 2>&1; then break; fi
@@ -76,6 +90,7 @@ jobs:
           grep -q '"expected":"quark-dl.elf"' diag.json
           grep -q '"port":8765' diag.json
           grep -q '"host":"127.0.0.1:8765"' diag.json
+          grep -q '"tls":"mbedtls' diag.json
           curl -sS -D ct-json.txt -o /dev/null "$base/api/diag"
           grep -qi '^content-type: application/json' ct-json.txt
 
@@ -117,6 +132,12 @@ jobs:
           echo "process did not exit after /api/exit"
           cat server.log
           exit 1
+
+      # Downloads, resume, chunked decoding and certificate verification. This is
+      # the whole reason the engine lives in plain C with its own HTTP client: it
+      # can be run against a server that misbehaves on purpose.
+      - name: Download engine and TLS
+        run: bash tools/test-stage2.sh
 
       - name: Log on failure
         if: failure()

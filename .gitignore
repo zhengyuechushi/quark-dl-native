@@ -4,3 +4,7 @@ gen/
 .build-*
 *.o
 server.log
+
+.quark-dl-data/
+.smoke-data/
+.smoke-dl/

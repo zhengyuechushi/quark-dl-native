@@ -11,13 +11,13 @@
   body {
     margin: 0; min-height: 100vh; background: #0f1115; color: #e8ecf1;
     font: 15px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    display: flex; justify-content: center; padding: 32px 16px;
+    display: flex; justify-content: center; padding: 28px 16px 48px;
   }
   .wrap { width: 100%; max-width: 720px; }
   header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
   h1 { font-size: 26px; margin: 0; letter-spacing: .5px; }
   .tag { font-size: 12px; color: #7b8794; border: 1px solid #2a3038; border-radius: 999px; padding: 2px 10px; }
-  .sub { color: #8b97a5; margin: 0 0 24px; font-size: 13px; }
+  .sub { color: #8b97a5; margin: 0 0 22px; font-size: 13px; }
   .card {
     background: #161a20; border: 1px solid #232a33; border-radius: 14px;
     padding: 18px 20px; margin-bottom: 14px;
@@ -29,6 +29,7 @@
   .v { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13.5px; text-align: right; word-break: break-all; }
   .ok { color: #4ade80; }
   .bad { color: #f87171; }
+  .warn { color: #fbbf24; }
   .muted { color: #6b7683; }
   button {
     appearance: none; border: 1px solid #2f3946; background: #1c2229; color: #e8ecf1;
@@ -37,11 +38,30 @@
   button:hover { background: #232b34; }
   button.danger { border-color: #5b2b2b; background: #2a1a1a; color: #fca5a5; }
   button.danger:hover { background: #3a2020; }
+  button.small { padding: 5px 12px; font-size: 12.5px; border-radius: 8px; }
   button:disabled { opacity: .5; cursor: default; }
+  input, textarea {
+    width: 100%; background: #0f1319; color: #e8ecf1; border: 1px solid #2a3038;
+    border-radius: 10px; padding: 11px 13px; font-size: 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  textarea { min-height: 92px; resize: vertical; line-height: 1.5; }
+  label.field { display: block; margin: 12px 0 6px; color: #8b97a5; font-size: 12.5px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; align-items: center; }
   .note { color: #6b7683; font-size: 12.5px; line-height: 1.7; margin-top: 10px; }
   code { background: #1c2229; border: 1px solid #232a33; border-radius: 5px; padding: 1px 6px; font-size: 12.5px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #4ade80; margin-right: 7px; vertical-align: 1px; }
   .dot.off { background: #f87171; }
+  .task { border-top: 1px solid #232a33; padding: 12px 0; }
+  .task:first-child { border-top: 0; padding-top: 4px; }
+  .task .top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .task .name { font-size: 14px; word-break: break-all; }
+  .task .meta { color: #8b97a5; font-size: 12.5px; margin-top: 2px; word-break: break-all; }
+  .bar { height: 6px; border-radius: 999px; background: #1c2229; margin-top: 8px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: #4f8cff; width: 0; transition: width .4s; }
+  .bar.done > i { background: #4ade80; }
+  .bar.failed > i { background: #f87171; }
+  .result { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; color: #c9d2dc; white-space: pre-wrap; word-break: break-all; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -60,7 +80,41 @@
     <div class="row"><span class="k">你连的地址</span><span class="v" id="host">—</span></div>
     <div class="row"><span class="k">已运行</span><span class="v" id="uptime">—</span></div>
     <div class="row"><span class="k">构建</span><span class="v" id="build">—</span></div>
-    <div class="row"><span class="k">同名实例</span><span class="v" id="instances">—</span></div>
+    <div class="row"><span class="k">TLS</span><span class="v" id="tls">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>网络自检</h2>
+    <p class="note" style="margin-top:0">
+      这台主机能不能真的上网，取决于四件互相独立的事：域名解析、TCP、TLS 握手、证书校验。
+      点一次就知道断在哪一步。
+    </p>
+    <label class="field">测试地址</label>
+    <input id="probeUrl" value="https://api.quark.cn/" spellcheck="false">
+    <div class="toolbar">
+      <button id="probe">开始自检</button>
+      <span class="muted" id="probeState"></span>
+    </div>
+    <div class="result" id="probeOut"></div>
+  </div>
+
+  <div class="card">
+    <h2>下载</h2>
+    <label class="field">链接（一行一个，支持多选粘贴）</label>
+    <textarea id="urls" placeholder="https://…&#10;https://…" spellcheck="false"></textarea>
+    <label class="field">保存到（绝对路径）</label>
+    <input id="dir" spellcheck="false" placeholder="/data/homebrew">
+    <div class="toolbar">
+      <button id="add">加入下载队列</button>
+      <button id="saveDir" class="small">记住这个目录</button>
+      <button id="clear" class="small">清掉已完成</button>
+      <span class="muted" id="addState"></span>
+    </div>
+    <p class="note">
+      默认保存到 <code id="dirDefault">/data/homebrew</code>，和 ProsperoStore 的安装目录一致。
+      文件先写成 <code>.part</code>，校验落盘后才改名，中断了重新加同一个链接会接着下。
+    </p>
+    <div id="tasks"></div>
   </div>
 
   <div class="card">
@@ -73,13 +127,10 @@
   </div>
 
   <p class="note">
-    当前是骨架版：只验证「能加载、进程名正确、能主动退出」。登录与下载会在骨架确认无误后接入。
-  </p>
-  <p class="note">
     <a href="/api/diag" style="color:#7aa2ff">打开 /api/diag</a>（浏览器里是网页版，脚本仍拿 JSON）·
     <a href="/api/diag?format=json" style="color:#7aa2ff">JSON</a> ·
     <a href="/api/diag.txt" style="color:#7aa2ff">纯文本</a> ·
-    命令行：<code>curl http://PS5-IP:8765/api/diag?format=json</code>
+    <a href="/api/net/selftest" style="color:#7aa2ff">网络自检</a>
   </p>
 </div>
 
@@ -87,6 +138,8 @@
 (function () {
   var el = function (id) { return document.getElementById(id); };
   var busy = false;
+  var queueBusy = false;
+  var dirTouched = false;
 
   function text(id, value) { el(id).textContent = value; }
 
@@ -96,6 +149,51 @@
     var m = Math.floor(s / 60);
     if (m < 60) return m + ' 分 ' + (s % 60) + ' 秒';
     return Math.floor(m / 60) + ' 小时 ' + (m % 60) + ' 分';
+  }
+
+  function fmtSize(n) {
+    if (!n || n < 0) return '—';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1024 * 1024 * 1024) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+
+  var STATE = { queued: '等待中', running: '下载中', done: '已完成', failed: '失败', canceled: '已取消' };
+
+  /* XMLHttpRequest rather than fetch: the console's browser is old enough that
+   * fetch is not worth betting the whole page on. */
+  function request(method, url, body, cb) {
+    var xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    xhr.timeout = 30000;
+    if (body !== null && body !== undefined) {
+      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    }
+    xhr.onload = function () {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        cb(null, xhr.responseText);
+      } else {
+        cb(new Error('HTTP ' + xhr.status + (xhr.responseText ? ' ' + xhr.responseText.slice(0, 160) : '')));
+      }
+    };
+    xhr.onerror = function () { cb(new Error('网络错误')); };
+    xhr.ontimeout = function () { cb(new Error('超时')); };
+    xhr.send(body === undefined ? null : body);
+  }
+
+  function json(method, url, body, cb) {
+    request(method, url, body, function (err, text) {
+      if (err) { cb(err); return; }
+      var data;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        cb(new Error('返回内容不是 JSON'));
+        return;
+      }
+      cb(null, data);
+    });
   }
 
   function render(d) {
@@ -109,7 +207,7 @@
     text('port', d.port || '—');
     text('host', d.host || '—');
     text('uptime', fmtUptime(d.uptime_ms));
-    text('instances', (n.instances === undefined ? '—' : n.instances) + ' 个');
+    text('tls', (d.net && d.net.tls) || '—');
 
     el('name').innerHTML = '';
     var span = document.createElement('span');
@@ -123,8 +221,14 @@
       el('name').appendChild(hint);
     }
 
+    var dflt = (d.dl && d.dl.dir) || '/data/homebrew';
+    text('dirDefault', dflt);
+    if (!dirTouched && !el('dir').value) {
+      el('dir').value = dflt;
+    }
+
     el('dot').className = 'dot';
-    text('statusText', '运行中 · 内核读到的进程名 ' + (kernel || '未知'));
+    text('statusText', '运行中 · ' + (kernel || '进程名未知'));
   }
 
   function fail(err) {
@@ -132,58 +236,160 @@
     text('statusText', '连接中断：' + (err && err.message ? err.message : '未知错误'));
   }
 
-  /* XMLHttpRequest rather than fetch: the console's browser is old enough that
-   * fetch is not worth betting the whole page on. */
-  function request(method, url, cb) {
-    var xhr = new XMLHttpRequest();
-    xhr.open(method, url, true);
-    xhr.timeout = 6000;
-    xhr.onload = function () {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        cb(null, xhr.responseText);
-      } else {
-        cb(new Error('HTTP ' + xhr.status));
-      }
-    };
-    xhr.onerror = function () { cb(new Error('网络错误')); };
-    xhr.ontimeout = function () { cb(new Error('超时')); };
-    xhr.send(null);
-  }
-
-  function poll() {
+  function pollDiag() {
     if (busy) return;
     busy = true;
-    /* format=json on purpose: /api/diag renders a web page for browsers, and
-     * this is a script, whatever Accept header the console's XHR decides to
-     * send. */
-    request('GET', '/api/diag?format=json', function (err, text) {
+    json('GET', '/api/diag?format=json', null, function (err, data) {
       busy = false;
       if (err) { fail(err); return; }
-      var data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        fail(new Error('返回内容不是 JSON'));
-        return;
-      }
       render(data);
     });
   }
+
+  function taskNode(t) {
+    var box = document.createElement('div');
+    box.className = 'task';
+
+    var top = document.createElement('div');
+    top.className = 'top';
+    var name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = t.name || '(未命名)';
+    top.appendChild(name);
+
+    var right = document.createElement('span');
+    right.className = 'muted';
+    right.style.fontSize = '12.5px';
+    right.textContent = STATE[t.state] || t.state;
+    top.appendChild(right);
+    box.appendChild(top);
+
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var line = fmtSize(t.done) + (t.total > 0 ? ' / ' + fmtSize(t.total) : '');
+    if (t.state === 'running' && t.attempts > 1) line += ' · 第 ' + t.attempts + ' 次尝试';
+    meta.textContent = line + (t.err ? ' · ' + t.err : '');
+    box.appendChild(meta);
+
+    if (t.state === 'running' || t.state === 'queued' || t.state === 'done') {
+      var bar = document.createElement('div');
+      bar.className = 'bar' + (t.state === 'done' ? ' done' : '');
+      var fill = document.createElement('i');
+      var pct = t.total > 0 ? Math.min(100, (t.done / t.total) * 100) : (t.state === 'running' ? 12 : 0);
+      fill.style.width = pct.toFixed(1) + '%';
+      bar.appendChild(fill);
+      box.appendChild(bar);
+    }
+
+    if (t.state === 'running' || t.state === 'queued') {
+      var cancel = document.createElement('button');
+      cancel.className = 'small danger';
+      cancel.style.marginTop = '8px';
+      cancel.textContent = '取消';
+      cancel.onclick = function () {
+        cancel.disabled = true;
+        json('POST', '/api/dl/cancel?id=' + t.id, '', function () { pollQueue(); });
+      };
+      box.appendChild(cancel);
+    }
+    return box;
+  }
+
+  function pollQueue() {
+    if (queueBusy) return;
+    queueBusy = true;
+    json('GET', '/api/dl/list', null, function (err, data) {
+      queueBusy = false;
+      if (err) { return; }
+      var host = el('tasks');
+      var tasks = data.tasks || [];
+      host.innerHTML = '';
+      if (!tasks.length) {
+        var empty = document.createElement('p');
+        empty.className = 'note';
+        empty.textContent = '队列是空的。';
+        host.appendChild(empty);
+        return;
+      }
+      for (var i = 0; i < tasks.length; i++) {
+        host.appendChild(taskNode(tasks[i]));
+      }
+    });
+  }
+
+  el('probe').onclick = function () {
+    var btn = el('probe');
+    var url = el('probeUrl').value.trim() || 'https://api.quark.cn/';
+    btn.disabled = true;
+    text('probeState', '正在测试…');
+    el('probeOut').textContent = '';
+    json('GET', '/api/net/selftest?format=json&url=' + encodeURIComponent(url), null, function (err, d) {
+      btn.disabled = false;
+      text('probeState', '');
+      if (err) { el('probeOut').textContent = err.message; return; }
+      var lines = [];
+      lines.push((d.ok ? '✓ ' : '✗ ') + (d.host || '') + (d.ip ? ' → ' + d.ip : '') +
+        (d.resolver ? '（' + d.resolver + '，' + d.dns_ms + ' ms）' : ''));
+      if (d.tls && d.tls !== 'plain') {
+        lines.push('  TLS ' + d.tls + (d.cert ? ' · ' + d.cert : '') + (d.cert_expires ? ' · 到期 ' + d.cert_expires : ''));
+      } else if (d.tls === 'plain') {
+        lines.push('  明文 HTTP（没有 TLS）');
+      }
+      if (d.status) lines.push('  HTTP ' + d.status + ' · ' + d.bytes + ' 字节 · ' + d.total_ms + ' ms');
+      if (d.error) lines.push('  失败于 ' + (d.stage || '?') + '：' + d.error);
+      el('probeOut').textContent = lines.join('\n');
+    });
+  };
+
+  el('dir').oninput = function () { dirTouched = true; };
+
+  el('add').onclick = function () {
+    var raw = el('urls').value;
+    if (!raw.trim()) { text('addState', '先粘一个链接'); return; }
+    var btn = el('add');
+    btn.disabled = true;
+    text('addState', '正在加入…');
+    var body = 'url=' + encodeURIComponent(raw) +
+      '&dir=' + encodeURIComponent(el('dir').value.trim());
+    json('POST', '/api/dl/add', body, function (err, d) {
+      btn.disabled = false;
+      if (err) { text('addState', '失败：' + err.message); return; }
+      var bad = (d.errors && d.errors.length) ? d.errors.length : 0;
+      text('addState', d.added + ' 个已加入' + (bad ? '，' + bad + ' 个失败：' + d.errors[0].error : ''));
+      if (d.added) el('urls').value = '';
+      pollQueue();
+    });
+  };
+
+  el('saveDir').onclick = function () {
+    var btn = el('saveDir');
+    btn.disabled = true;
+    json('POST', '/api/settings', 'dir=' + encodeURIComponent(el('dir').value.trim()), function (err, d) {
+      btn.disabled = false;
+      if (err) { text('addState', '目录没保存：' + err.message); return; }
+      text('addState', '默认目录已保存：' + d.dir);
+    });
+  };
+
+  el('clear').onclick = function () {
+    json('POST', '/api/dl/clear', '', function () { pollQueue(); });
+  };
 
   el('exit').onclick = function () {
     var btn = el('exit');
     btn.disabled = true;
     btn.textContent = '正在退出…';
-    busy = true;
-    request('POST', '/api/exit', function () {
+    request('POST', '/api/exit', null, function () {
       el('dot').className = 'dot off';
       text('statusText', '已退出。重新加载 ELF 即可再次启动。');
       btn.textContent = '已结束';
     });
   };
 
-  poll();
-  setInterval(poll, 2000);
+  pollDiag();
+  pollQueue();
+  setInterval(pollDiag, 2000);
+  setInterval(pollQueue, 2000);
 })();
 </script>
 </body>

@@ -38,4 +38,13 @@ RUN bash /tmp/install-libmicrohttpd.sh \
     && "$PS5_PAYLOAD_SDK/bin/prospero-pkg-config" --exists libmicrohttpd \
     && "$PS5_PAYLOAD_SDK/bin/prospero-pkg-config" --cflags --libs libmicrohttpd
 
+# TLS for the console. The payload carries its own HTTPS stack instead of calling
+# libSceSsl, because a payload cannot know in advance which system modules its
+# process has loaded. mbedTLS is built with its default configuration against the
+# same prospero-clang, which keeps the dependency to one static library.
+COPY install-mbedtls.sh /tmp/install-mbedtls.sh
+RUN bash /tmp/install-mbedtls.sh \
+    && ls -l /opt/mbedtls/lib \
+    && test -f /opt/mbedtls/include/mbedtls/ssl.h
+
 WORKDIR /work
