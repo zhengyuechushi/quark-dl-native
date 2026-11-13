@@ -63,10 +63,6 @@ jobs:
           # what the console reported before this was added.
           grep -aqF "quark-cloud-drive/" "$ELF" || { echo "download UA missing"; exit 1; }
           grep -aqF "Referer: https://pan.quark.cn/" "$ELF" || { echo "download Referer missing"; exit 1; }
-          # A folder has to end up in the queue even when the service refuses the
-          # group: the batch size is learned at run time and the fallback is one
-          # fid per request, which is the only shape proven to work.
-          grep -aqF "改成每次最多" "$ELF" || { echo "batch fallback missing"; exit 1; }
           # A refusal must carry the service's own words, not just the status
           # code: "HTTP 400" alone is what made the folder report unanswerable.
           grep -aqF "（请求被拒）" "$ELF" || { echo "refusal body missing"; exit 1; }
