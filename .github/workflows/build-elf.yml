@@ -145,6 +145,23 @@ jobs:
           test "$n" = "2"
           echo ok
 
+      # Pause keeps the .part (resumable) and cancel removes it (destructive), so
+      # they are two different verbs, not one. A cancel that silently kept the
+      # half file is the bug a user reads as "I canceled but the bytes are still
+      # taking space", and a pause that deleted it is "I paused and lost progress".
+      # The queue must expose both, plus resume, and the endpoints must route them.
+      - name: Pause and cancel are distinct
+        run: |
+          set -e
+          grep -q "int dl_pause(int id)" src/dl.h
+          grep -q "int dl_resume(int id)" src/dl.h
+          grep -q "DL_PAUSED" src/dl.h
+          grep -q "unlink(part)" src/dl.c
+          grep -q '"/api/dl/pause"' src/api.c
+          grep -q '"/api/dl/resume"' src/api.c
+          grep -q "int dl_set_limit(int n)" src/dl.h
+          echo ok
+
       # A 4 KB body reader forces one read() + write() system call per 4 KB,
       # which a big file turns into a million of each and crawls while a small
       # file finishes in a blink. The reader must stay on the large scratch

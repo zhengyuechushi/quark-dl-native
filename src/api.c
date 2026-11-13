@@ -775,6 +775,38 @@ api_dl_cancel(struct MHD_Connection *conn, const char *method) {
 }
 
 static enum MHD_Result
+api_dl_pause(struct MHD_Connection *conn, const char *method) {
+  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
+  char body[160];
+  int n;
+
+  if(strcmp(method, MHD_HTTP_METHOD_POST)) {
+    return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
+                     "{\"ok\":false,\"error\":\"use POST\"}");
+  }
+  n = (arg && !strcmp(arg, "all")) ? dl_pause(-1)
+                                   : dl_pause(arg ? atoi(arg) : -1);
+  snprintf(body, sizeof(body), "{\"ok\":true,\"paused\":%d}", n);
+  return send_json(conn, MHD_HTTP_OK, body);
+}
+
+static enum MHD_Result
+api_dl_resume(struct MHD_Connection *conn, const char *method) {
+  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
+  char body[160];
+  int n;
+
+  if(strcmp(method, MHD_HTTP_METHOD_POST)) {
+    return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
+                     "{\"ok\":false,\"error\":\"use POST\"}");
+  }
+  n = (arg && !strcmp(arg, "all")) ? dl_resume(-1)
+                                   : dl_resume(arg ? atoi(arg) : -1);
+  snprintf(body, sizeof(body), "{\"ok\":true,\"resumed\":%d}", n);
+  return send_json(conn, MHD_HTTP_OK, body);
+}
+
+static enum MHD_Result
 api_dl_retry(struct MHD_Connection *conn, const char *method) {
   const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
   char body[160];
@@ -806,11 +838,13 @@ static enum MHD_Result
 api_settings(struct MHD_Connection *conn, const char *body, size_t size,
              const char *method) {
   char dir[340];
+  char limit[16];
   char reply[700];
   char safe[400];
   char err[220];
 
   if(!strcmp(method, MHD_HTTP_METHOD_POST)) {
+    /* `dir` is required; `limit` (concurrent downloads) is optional. */
     if(!form_field(body, size, "dir", dir, sizeof(dir)) || !dir[0]) {
       return send_json(conn, MHD_HTTP_BAD_REQUEST,
                        "{\"ok\":false,\"error\":\"缺少 dir 字段\"}");
@@ -820,11 +854,14 @@ api_settings(struct MHD_Connection *conn, const char *body, size_t size,
       snprintf(reply, sizeof(reply), "{\"ok\":false,\"error\":\"%s\"}", safe);
       return send_json(conn, MHD_HTTP_BAD_REQUEST, reply);
     }
+    if(form_field(body, size, "limit", limit, sizeof(limit)) && limit[0]) {
+      dl_set_limit(atoi(limit));
+    }
   }
   json_escape(safe, sizeof(safe), dl_default_dir());
   snprintf(reply, sizeof(reply),
            "{\"ok\":true,\"dir\":\"%s\",\"limit\":%d,\"tasks\":%d,\"running\":%d}",
-           safe, DL_LIMIT, dl_count(), dl_running());
+           safe, dl_limit(), dl_count(), dl_running());
   return send_json(conn, MHD_HTTP_OK, reply);
 }
 
@@ -1684,6 +1721,12 @@ api_request(struct MHD_Connection *conn, const char *url, const char *method,
   }
   if(!strcmp(path, "/api/dl/cancel")) {
     return api_dl_cancel(conn, method);
+  }
+  if(!strcmp(path, "/api/dl/pause")) {
+    return api_dl_pause(conn, method);
+  }
+  if(!strcmp(path, "/api/dl/resume")) {
+    return api_dl_resume(conn, method);
   }
   if(!strcmp(path, "/api/dl/retry")) {
     return api_dl_retry(conn, method);

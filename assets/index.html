@@ -105,6 +105,7 @@
   .grp-icon { color: #7aa2ff; flex: 0 0 auto; font-size: 14px; }
   .grp-title { flex: 1; font-size: 14px; word-break: break-all; }
   .grp-count { color: #8b97a5; font-size: 12.5px; flex: 0 0 auto; }
+  .grp-speed { color: #7aa2ff; font-size: 12.5px; flex: 0 0 auto; }
   .grp-body { display: none; padding-left: 16px; }
   .grp.open > .grp-body { display: block; }
   .grp-body .task { border-top-color: #1c2229; }
@@ -267,6 +268,14 @@
         <div class="toolbar">
           <button id="saveDir" class="small">记住这个目录</button>
           <button id="clear" class="small">清掉已完成</button>
+          <span class="muted">并发</span>
+          <select id="limitSel" class="small">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
           <span class="muted" id="addState"></span>
         </div>
         <p class="note">
@@ -331,7 +340,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.7.1';
+  var PAGE_V = '0.8.0';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -355,7 +364,12 @@
   }
 
   var STATE = { queued: '等待中', running: '下载中', done: '已完成', failed: '失败',
-                canceled: '已取消', missing: '文件已被删除' };
+                canceled: '已取消', missing: '文件已被删除', paused: '已暂停' };
+
+  function fmtSpeed(n) {
+    if (!n || n <= 0) return '';
+    return fmtSize(n) + '/s';
+  }
 
   /* XMLHttpRequest rather than fetch: the console's browser is old enough that
    * fetch is not worth betting the whole page on. */
@@ -488,6 +502,10 @@
     /* The bytes are gone but the size is still known, so show that instead of
      * "0 / 285.8 MB", which reads like a download that failed at byte zero. */
     if (t.state === 'missing') line = (t.total > 0 ? fmtSize(t.total) + ' · ' : '') + '文件已不在了';
+    if (t.state === 'running') {
+      var sp = fmtSpeed(t.speed);
+      if (sp) line += ' · ' + sp;
+    }
     meta.textContent = line + (t.err ? ' · ' + t.err : '');
     box.appendChild(meta);
 
@@ -501,16 +519,35 @@
       box.appendChild(bar);
     }
 
-    if (t.state === 'running' || t.state === 'queued') {
+    if (t.state === 'running' || t.state === 'queued' || t.state === 'paused') {
+      var bar2 = document.createElement('div');
+      bar2.className = 'toolbar';
+      bar2.style.marginTop = '8px';
+
+      /* Pause keeps the .part; the button flips to 继续 once paused. */
+      var pause = document.createElement('button');
+      pause.className = 'small';
+      pause.textContent = (t.state === 'paused') ? '继续' : '暂停';
+      pause.onclick = function () {
+        pause.disabled = true;
+        var url = (t.state === 'paused')
+          ? '/api/dl/resume?id=' + t.id
+          : '/api/dl/pause?id=' + t.id;
+        json('POST', url, '', function () { pollQueue(); });
+      };
+      bar2.appendChild(pause);
+
+      /* Cancel removes the unfinished .part file, so it is destructive and kept
+       * separate from pause. */
       var cancel = document.createElement('button');
       cancel.className = 'small danger';
-      cancel.style.marginTop = '8px';
       cancel.textContent = '取消';
       cancel.onclick = function () {
         cancel.disabled = true;
         json('POST', '/api/dl/cancel?id=' + t.id, '', function () { pollQueue(); });
       };
-      box.appendChild(cancel);
+      bar2.appendChild(cancel);
+      box.appendChild(bar2);
     } else if (t.state === 'failed' || t.state === 'canceled' || t.state === 'missing' ||
                (t.state === 'done' && t.exists === false)) {
       /* 失败的链接多半是过期了；已完成但文件被删了，同一句话：再下一次。 */
@@ -567,8 +604,10 @@
     var count = document.createElement('span');
     count.className = 'grp-count';
     var done = 0;
+    var groupSpeed = 0;
     for (var i = 0; i < items.length; i++) {
       if (items[i].state === 'done') done++;
+      if (items[i].state === 'running') groupSpeed += (items[i].speed || 0);
     }
     count.textContent = done + ' / ' + items.length;
 
@@ -576,6 +615,13 @@
     head.appendChild(icon);
     head.appendChild(title);
     head.appendChild(count);
+
+    if (groupSpeed > 0) {
+      var sp = document.createElement('span');
+      sp.className = 'grp-speed';
+      sp.textContent = fmtSpeed(groupSpeed);
+      head.appendChild(sp);
+    }
     box.appendChild(head);
 
     var body = document.createElement('div');
@@ -603,6 +649,10 @@
     json('GET', '/api/dl/list', null, function (err, data) {
       queueBusy = false;
       if (err) { return; }
+      /* Reflect the server's concurrent-download limit in the selector. */
+      if (data.limit && el('limitSel').value !== String(data.limit)) {
+        el('limitSel').value = String(data.limit);
+      }
       var host = el('tasks');
       var tasks = data.tasks || [];
       host.innerHTML = '';
@@ -690,6 +740,16 @@
       btn.disabled = false;
       if (err) { text('addState', '目录没保存：' + err.message); return; }
       text('addState', '默认目录已保存：' + d.dir);
+    });
+  };
+
+  el('limitSel').onchange = function () {
+    var n = parseInt(el('limitSel').value, 10) || 2;
+    json('POST', '/api/settings', 'dir=' + encodeURIComponent(el('dir').value.trim()) +
+      '&limit=' + n, function (err, d) {
+      if (err) { text('addState', '并发没保存：' + err.message); return; }
+      text('addState', '并发数已设为 ' + d.limit);
+      pollQueue();
     });
   };
 

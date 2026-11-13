@@ -22,6 +22,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(__linux__)
@@ -39,8 +40,14 @@ typedef struct {
   int state;
   int attempts;
   volatile int cancel;
+  volatile int pause;
   long long done;
   long long total;
+  /* Speed sampling: the worker records how many bytes it has written and when,
+   * and dl_json turns the delta into bytes/second. A task that is not running
+   * reports 0. */
+  long long sample_done;
+  long long sample_ms;
   char url[QUARK_URL_MAX];
   char dir[300];
   /* A name can now be a relative path ("剧集/第01话.mkv") so the download
@@ -52,6 +59,7 @@ typedef struct {
 static dl_task g_task[DL_MAX];
 static int g_count;
 static int g_running;
+static int g_limit = DL_DEFAULT_LIMIT;
 static int g_next_id = 1;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static char g_data[300] = "/data/quark-dl";
@@ -67,6 +75,17 @@ static void pump_locked(void);
 static void save_locked(void);
 
 /* ---------------------------------------------------------------- helpers */
+
+/* Monotonic milliseconds, used to turn a byte delta into a speed. */
+static long long
+now_ms(void) {
+  struct timespec ts;
+
+  if(clock_gettime(CLOCK_MONOTONIC, &ts)) {
+    return 0;
+  }
+  return (long long)ts.tv_sec * 1000LL + ts.tv_nsec / 1000000LL;
+}
 
 static int
 app(char *buf, size_t cap, size_t *used, const char *fmt, ...) {
@@ -729,13 +748,23 @@ dl_worker(void *arg) {
   }
 
   pthread_mutex_lock(&g_lock);
-  if(t->cancel || rc == -2) {
+  if(rc == 0) {
+    /* Finished before the pause landed (the worker holds the lock here, so a
+     * pause that raced it lost). Report done, not paused: the file is complete. */
+    t->state = DL_DONE;
+  } else if(t->pause) {
+    /* Paused: the .part stays so the user can continue later. */
+    t->state = DL_PAUSED;
+    t->pause = 0;
+    t->cancel = 0;
+    if(!t->err[0]) {
+      snprintf(t->err, sizeof(t->err), "已暂停");
+    }
+  } else if(t->cancel || rc == -2) {
     t->state = DL_CANCELED;
     if(!t->err[0]) {
       snprintf(t->err, sizeof(t->err), "已取消");
     }
-  } else if(rc == 0) {
-    t->state = DL_DONE;
   } else {
     t->state = DL_FAILED;
     if(!t->err[0]) {
@@ -755,7 +784,7 @@ static void
 pump_locked(void) {
   int i;
 
-  for(i = 0; i < g_count && g_running < DL_LIMIT; i++) {
+  for(i = 0; i < g_count && g_running < g_limit; i++) {
     dl_task *t = &g_task[i];
     pthread_attr_t attr;
     const pthread_attr_t *use = NULL;
@@ -978,6 +1007,66 @@ dl_add(const char *url, const char *name, const char *dir, char *err,
 }
 
 int
+dl_pause(int id) {
+  int i;
+  int n = 0;
+
+  pthread_mutex_lock(&g_lock);
+  for(i = 0; i < g_count; i++) {
+    dl_task *t = &g_task[i];
+
+    if(!t->id || (id >= 0 && t->id != id)) {
+      continue;
+    }
+    if(t->state == DL_QUEUED) {
+      t->state = DL_PAUSED;
+      if(!t->err[0]) {
+        snprintf(t->err, sizeof(t->err), "已暂停");
+      }
+      n++;
+    } else if(t->state == DL_RUNNING) {
+      /* Ask the worker to stop, but keep the bytes: pause, not cancel. The
+       * pause flag is what makes the worker land on DL_PAUSED rather than
+       * DL_CANCELED, and cancel is the abort hook the HTTP layer watches. */
+      t->pause = 1;
+      t->cancel = 1;
+      n++;
+    }
+  }
+  save_locked();
+  pthread_mutex_unlock(&g_lock);
+  return n;
+}
+
+int
+dl_resume(int id) {
+  int i;
+  int n = 0;
+
+  pthread_mutex_lock(&g_lock);
+  for(i = 0; i < g_count; i++) {
+    dl_task *t = &g_task[i];
+
+    if(!t->id || (id >= 0 && t->id != id)) {
+      continue;
+    }
+    if(t->state == DL_PAUSED) {
+      t->state = DL_QUEUED;
+      t->pause = 0;
+      t->cancel = 0;
+      t->err[0] = 0;
+      n++;
+    }
+  }
+  if(n) {
+    pump_locked();
+  }
+  save_locked();
+  pthread_mutex_unlock(&g_lock);
+  return n;
+}
+
+int
 dl_cancel(int id) {
   int i;
   int n = 0;
@@ -990,11 +1079,28 @@ dl_cancel(int id) {
       continue;
     }
     t->cancel = 1;
-    if(t->state == DL_QUEUED) {
+    if(t->state == DL_QUEUED || t->state == DL_PAUSED) {
       t->state = DL_CANCELED;
       snprintf(t->err, sizeof(t->err), "已取消");
     }
     n++;
+  }
+  /* Remove the half-downloaded file so "取消" really means the bytes are gone.
+   * Only the .part is touched - a finished file (no .part) is left alone, and
+   * a paused task that is canceled loses its resume point on purpose. */
+  for(i = 0; i < g_count; i++) {
+    dl_task *t = &g_task[i];
+    char part[1024];
+
+    if(!t->id) {
+      continue;
+    }
+    if(id >= 0 && t->id != id) {
+      continue;
+    }
+    if(path_join(part, sizeof(part), t->dir, t->name, ".part") == 0) {
+      unlink(part);
+    }
   }
   save_locked();
   pthread_mutex_unlock(&g_lock);
@@ -1065,6 +1171,37 @@ dl_running(void) {
 }
 
 int
+dl_limit(void) {
+  int n;
+
+  pthread_mutex_lock(&g_lock);
+  n = g_limit;
+  pthread_mutex_unlock(&g_lock);
+  return n;
+}
+
+int
+dl_set_limit(int n) {
+  int changed;
+
+  if(n < 1) {
+    n = 1;
+  }
+  if(n > 8) {
+    n = 8;
+  }
+  pthread_mutex_lock(&g_lock);
+  changed = (n != g_limit);
+  g_limit = n;
+  if(changed && g_limit > g_running) {
+    /* More slots just opened; start whatever is waiting. */
+    pump_locked();
+  }
+  pthread_mutex_unlock(&g_lock);
+  return g_limit;
+}
+
+int
 dl_count(void) {
   int i;
   int n = 0;
@@ -1088,6 +1225,7 @@ state_name(int state) {
     case DL_FAILED: return "failed";
     case DL_CANCELED: return "canceled";
     case DL_MISSING: return "missing";
+    case DL_PAUSED: return "paused";
     default: return "unknown";
   }
 }
@@ -1100,7 +1238,7 @@ dl_json(char *out, size_t cap) {
 
   if(app(out, cap, &used, "{\"dir\":") < 0 ||
      jstr(out, cap, &used, g_dir) < 0 ||
-     app(out, cap, &used, ",\"limit\":%d,\"running\":%d,\"tasks\":[", DL_LIMIT,
+     app(out, cap, &used, ",\"limit\":%d,\"running\":%d,\"tasks\":[", g_limit,
          g_running) < 0) {
     return -1;
   }
@@ -1129,21 +1267,42 @@ dl_json(char *out, size_t cap) {
                  ? 1
                  : 0;
     }
-    if(app(out, cap, &used,
-           "{\"id\":%d,\"state\":\"%s\",\"attempts\":%d,\"done\":%lld,"
-           "\"total\":%lld,\"exists\":%s,\"name\":",
-           t->id, state_name(t->state), t->attempts, t->done, t->total,
-           exists < 0 ? "null" : (exists ? "true" : "false")) < 0 ||
-       jstr(out, cap, &used, t->name) < 0 ||
-       app(out, cap, &used, ",\"dir\":") < 0 ||
-       jstr(out, cap, &used, t->dir) < 0 ||
-       app(out, cap, &used, ",\"url\":") < 0 ||
-       jstr(out, cap, &used, t->url) < 0 ||
-       app(out, cap, &used, ",\"err\":") < 0 ||
-       jstr(out, cap, &used, t->err) < 0 ||
-       app(out, cap, &used, "}") < 0) {
-      pthread_mutex_unlock(&g_lock);
-      return -1;
+    /* Speed is the byte delta since the last snapshot, over the elapsed
+     * milliseconds - a running average over the poll interval (2s). Only a
+     * running task has one; anything else reports 0. The first sample has no
+     * baseline, so it seeds the counters and reports 0 rather than a huge
+     * number from a clock that just started. */
+    {
+      long long speed = 0;
+      long long now = now_ms();
+
+      if(t->state == DL_RUNNING) {
+        if(t->sample_ms && now > t->sample_ms) {
+          long long delta = t->done - t->sample_done;
+
+          if(delta > 0) {
+            speed = delta * 1000LL / (now - t->sample_ms);
+          }
+        }
+        t->sample_done = t->done;
+        t->sample_ms = now;
+      }
+      if(app(out, cap, &used,
+             "{\"id\":%d,\"state\":\"%s\",\"attempts\":%d,\"done\":%lld,"
+             "\"total\":%lld,\"speed\":%lld,\"exists\":%s,\"name\":",
+             t->id, state_name(t->state), t->attempts, t->done, t->total,
+             speed, exists < 0 ? "null" : (exists ? "true" : "false")) < 0 ||
+         jstr(out, cap, &used, t->name) < 0 ||
+         app(out, cap, &used, ",\"dir\":") < 0 ||
+         jstr(out, cap, &used, t->dir) < 0 ||
+         app(out, cap, &used, ",\"url\":") < 0 ||
+         jstr(out, cap, &used, t->url) < 0 ||
+         app(out, cap, &used, ",\"err\":") < 0 ||
+         jstr(out, cap, &used, t->err) < 0 ||
+         app(out, cap, &used, "}") < 0) {
+        pthread_mutex_unlock(&g_lock);
+        return -1;
+      }
     }
   }
   pthread_mutex_unlock(&g_lock);

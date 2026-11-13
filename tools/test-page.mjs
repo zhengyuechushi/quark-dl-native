@@ -440,6 +440,77 @@ check('items 把文件夹名当第二段发出',
       !!dirReq && /items=d1%09%E7%AC%AC%E4%BA%8C%E5%AD%A3%09d/.test(dirReq.body),
       dirReq && dirReq.body);
 
+console.log('\n暂停/继续/取消 与 速度显示');
+/* A running task shows 暂停 + 取消, and its meta line carries a speed. */
+DEFAULTS['/api/dl/list'] = () => ({
+  ok: true, limit: 2,
+  tasks: [
+    { id: 10, state: 'running', done: 5000000, total: 10000000, attempts: 1, speed: 2400000, name: '剧集/第01话.mkv', dir: '/data/homebrew', exists: null },
+    { id: 11, state: 'queued', done: 0, total: 50, attempts: 0, speed: 0, name: '单文件.bin', dir: '/data/homebrew', exists: null },
+  ],
+});
+route = (method, url) => {
+  const path = url.split('?')[0];
+  const d = DEFAULTS[path];
+  return { status: 200, text: JSON.stringify(d ? d() : {}) };
+};
+drain();
+const tHost = nodeFor('tasks');
+const grpNodes = tHost.children.filter((c) => c.className.indexOf('grp') === 0);
+const runGrp = grpNodes[0];
+const runTask = runGrp.children.find((c) => c.className === 'grp-body').children[0];
+const runBtns = runTask.getElementsByTagName('BUTTON');
+check('下载中有暂停和取消两个按钮', runBtns.length === 2, `got ${runBtns.length}`);
+check('第一个按钮是「暂停」', runBtns.some((b) => b.textContent === '暂停'));
+check('有「取消」按钮', runBtns.some((b) => b.textContent === '取消'));
+const runMeta = runTask.children.find((c) => c.className === 'meta');
+check('下载中显示速度', !!runMeta && /\/s/.test(runMeta.textContent), runMeta && runMeta.textContent);
+const grpHead0 = runGrp.children.find((c) => c.className === 'grp-head');
+check('文件夹头显示聚合速度', !!grpHead0 && grpHead0.children.some((c) => c.className === 'grp-speed'),
+      grpHead0 && grpHead0.children.map((c) => c.className + ':' + c.textContent).join('|'));
+
+/* 点「暂停」发 /api/dl/pause，点「继续」发 /api/dl/resume，取消发 /api/dl/cancel。 */
+requests.length = 0;
+const pauseBtn = runBtns.find((b) => b.textContent === '暂停');
+pauseBtn.onclick();
+let pauseReq = requests.find((r) => r.url.split('?')[0] === '/api/dl/pause');
+check('点暂停发到 /api/dl/pause', !!pauseReq);
+requests.length = 0;
+const cancelBtn = runBtns.find((b) => b.textContent === '取消');
+cancelBtn.onclick();
+const cancelReq = requests.find((r) => r.url.split('?')[0] === '/api/dl/cancel');
+check('点取消发到 /api/dl/cancel', !!cancelReq);
+requests.length = 0;
+
+/* 暂停态的任务显示「继续」。触发一次 pollQueue 渲染（借 clear 按钮的回调）。 */
+DEFAULTS['/api/dl/list'] = () => ({
+  ok: true, limit: 2,
+  tasks: [
+    { id: 10, state: 'paused', done: 5000000, total: 10000000, attempts: 1, speed: 0, name: '剧集/第01话.mkv', dir: '/data/homebrew', exists: null },
+  ],
+});
+requests.length = 0;
+nodeFor('clear').onclick(); /* posts /api/dl/clear then re-polls the queue */
+drain();
+const pGrp = nodeFor('tasks').children.find((c) => c.className.indexOf('grp') === 0);
+const pTask = pGrp.children.find((c) => c.className === 'grp-body').children[0];
+const pBtns = pTask.getElementsByTagName('BUTTON');
+check('暂停态显示「继续」', pBtns.some((b) => b.textContent === '继续'));
+check('暂停态仍有「取消」', pBtns.some((b) => b.textContent === '取消'));
+requests.length = 0;
+const resumeBtn = pBtns.find((b) => b.textContent === '继续');
+resumeBtn.onclick();
+const resumeReq = requests.find((r) => r.url.split('?')[0] === '/api/dl/resume');
+check('点继续发到 /api/dl/resume', !!resumeReq);
+
+console.log('\n并发数选择器');
+/* Changing the selector posts the limit to /api/settings. */
+const limitSel = nodeFor('limitSel');
+limitSel.value = '3';
+if (limitSel.onchange) limitSel.onchange();
+const setReq = requests.find((r) => r.url.split('?')[0] === '/api/settings' && /limit=3/.test(r.body));
+check('改并发发 limit=3 到 /api/settings', !!setReq, setReq && setReq.body);
+
 console.log('');
 if (failures) {
   console.log(`${failures} 项失败`);

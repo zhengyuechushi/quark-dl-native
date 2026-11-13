@@ -23,9 +23,16 @@
  * task did not fail at anything - calling it "失败" makes a user look for a
  * network problem that does not exist. Re-adding the URL queues it again. */
 #define DL_MISSING 5
+/* Stopped on purpose, keeping the .part file so it can be resumed later. Its
+ * own state: a paused task is not "canceled" (the bytes stay) and not "queued"
+ * (it must not start on its own until the user says so). */
+#define DL_PAUSED 6
 
 #define DL_MAX 64
-#define DL_LIMIT 3
+/* Default number of simultaneous downloads. Tunable at runtime via
+ * dl_set_limit / the settings endpoint; 3 at once was more than a console
+ * wants, so the default is 2 and the user can pick. */
+#define DL_DEFAULT_LIMIT 2
 
 /* Loads the persisted queue and settings, creating the data directory. */
 int dl_init(const char *data_dir);
@@ -61,8 +68,19 @@ void dl_set_cookie(const char *cookie);
  * Returns the number of tasks queued. */
 int dl_retry(int id);
 
-/* id < 0 cancels everything. Returns the number of tasks touched. */
+/* id < 0 pauses everything running or queued. A paused task keeps its .part
+ * file; dl_resume puts it back in the queue. Returns the number touched. */
+int dl_pause(int id);
+int dl_resume(int id);
+
+/* id < 0 cancels everything. Unlike pause, cancel also removes the task's
+ * .part file, so an unfinished download is actually gone, not silently kept.
+ * Returns the number of tasks touched. */
 int dl_cancel(int id);
+
+/* Concurrent download limit. dl_set_limit clamps to [1, 8]. */
+int dl_limit(void);
+int dl_set_limit(int n);
 
 /* Removes finished tasks from the list. Returns how many were dropped. */
 int dl_clear_finished(void);
