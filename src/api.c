@@ -144,7 +144,9 @@ normalize_path(char *dst, size_t cap, const char *url) {
 }
 
 /* Browsers advertise text/html; curl does not. The page's own requests are
- * XHR, which sends "*/*", so the JSON path stays the default for scripts. */
+ * XHR, which sends a wildcard Accept header, so the JSON path stays the default
+ * for scripts. Never write a wildcard MIME type inside a comment: the slash-star
+ * in it closes the comment, which is how this file first failed to compile. */
 static int
 wants_html(struct MHD_Connection *conn) {
   const char *accept =
