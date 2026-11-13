@@ -90,6 +90,19 @@ curl http://<PS5-IP>:8888/api/diag
 - 默认下载目录与 ProsperoStore 一致
 - 设置页：目录选择、并发数、空间预检
 
+## 已经验证到哪一步
+
+`linux-smoke` 作业用同一份源码（不定义 `__SCE__`）在 CI 里真的启动了服务，并断言：
+
+- `GET /api/health` → `ok:true`、`build` 等于编译时的提交号、`port:8888`
+- `GET /api/diag` → `name.ok:true`、`instances:1`
+- `GET /` → 返回内嵌页面
+- `POST /api/exit` → 进程在 250 ms 后消失（`kill -0` 失败）
+
+也就是说**路由、JSON、静态资源、退出主循环**这几条在真实进程里跑通过。
+只有 `SYS_thr_set_name`、`sysctl` 内核进程表读取、通知弹窗这三处属于主机专有，
+无法离线验证——它们正是从参考项目逐行搬过来的部分。
+
 ## 许可
 
 GPL-3.0-or-later。来源与逐文件对应关系见 `NOTICE.md`。
