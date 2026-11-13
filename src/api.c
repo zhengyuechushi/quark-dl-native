@@ -406,7 +406,8 @@ api_net_selftest(struct MHD_Connection *conn) {
   long long t_http = 0;
   int dns_ok;
   int http_ok = 0;
-  static __thread http_result res;
+  /* Serialised by the single libmicrohttpd thread; see websrv.c. */
+  static http_result res;
   http_req req;
 
   /* The default has to be a host that actually serves a valid certificate, or
@@ -969,7 +970,9 @@ api_quark_qr(struct MHD_Connection *conn) {
    * these handlers run on libmicrohttpd worker threads whose stack is small
    * and not ours to set. Each thread serves one connection at a time, so a
    * thread-local copy is as private as a stack copy and costs no stack. */
-  static __thread quark_session s;
+  /* 7 KB, so it lives here rather than on a stack; the server handles one
+   * request at a time, which is what makes a plain static safe. */
+  static quark_session s;
 
   if(!act || !strcmp(act, "start")) {
     char url[600];
@@ -1035,7 +1038,9 @@ api_quark_status(struct MHD_Connection *conn) {
    * these handlers run on libmicrohttpd worker threads whose stack is small
    * and not ours to set. Each thread serves one connection at a time, so a
    * thread-local copy is as private as a stack copy and costs no stack. */
-  static __thread quark_session s;
+  /* 7 KB, so it lives here rather than on a stack; the server handles one
+   * request at a time, which is what makes a plain static safe. */
+  static quark_session s;
   char enick[260];
   char eerr[520];
   char json[1100];
@@ -1069,7 +1074,9 @@ api_quark_login(struct MHD_Connection *conn, const char *body, size_t size) {
    * these handlers run on libmicrohttpd worker threads whose stack is small
    * and not ours to set. Each thread serves one connection at a time, so a
    * thread-local copy is as private as a stack copy and costs no stack. */
-  static __thread quark_session s;
+  /* 7 KB, so it lives here rather than on a stack; the server handles one
+   * request at a time, which is what makes a plain static safe. */
+  static quark_session s;
   int nkeys = 0;
   int saved;
 
@@ -1128,7 +1135,9 @@ api_quark_list(struct MHD_Connection *conn) {
    * these handlers run on libmicrohttpd worker threads whose stack is small
    * and not ours to set. Each thread serves one connection at a time, so a
    * thread-local copy is as private as a stack copy and costs no stack. */
-  static __thread quark_session s;
+  /* 7 KB, so it lives here rather than on a stack; the server handles one
+   * request at a time, which is what makes a plain static safe. */
+  static quark_session s;
   quark_entry *entries;
   char err[400];
   char eerr[900];
@@ -1248,7 +1257,9 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
    * these handlers run on libmicrohttpd worker threads whose stack is small
    * and not ours to set. Each thread serves one connection at a time, so a
    * thread-local copy is as private as a stack copy and costs no stack. */
-  static __thread quark_session s;
+  /* 7 KB, so it lives here rather than on a stack; the server handles one
+   * request at a time, which is what makes a plain static safe. */
+  static quark_session s;
   collect_ctx cc;
   add_item *arr;
   char *line;
@@ -1431,7 +1442,9 @@ api_quark_probe(struct MHD_Connection *conn) {
    * these handlers run on libmicrohttpd worker threads whose stack is small
    * and not ours to set. Each thread serves one connection at a time, so a
    * thread-local copy is as private as a stack copy and costs no stack. */
-  static __thread quark_session s;
+  /* 7 KB, so it lives here rather than on a stack; the server handles one
+   * request at a time, which is what makes a plain static safe. */
+  static quark_session s;
   char *out;
   char err[400];
 

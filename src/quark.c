@@ -430,7 +430,7 @@ quark_qr_new(char *url, size_t urlcap, char *token, size_t tokcap, char *err,
   char rid[64];
   char jerr[120];
   char *body = NULL;
-  static __thread http_result meta;
+  static http_result meta;
   json_value *v;
   const char *t;
   long long code;
@@ -479,7 +479,7 @@ quark_qr_new(char *url, size_t urlcap, char *token, size_t tokcap, char *err,
 static int
 qr_exchange(const char *ticket, quark_session *s, char *err, size_t errcap) {
   char url[900];
-  static __thread http_result meta;
+  static http_result meta;
 
   snprintf(url, sizeof(url), QUARK_ORIGIN "/account/info?st=%s&lw=scan",
            ticket);
@@ -529,7 +529,7 @@ quark_qr_poll(const char *token, quark_session *s, char *err, size_t errcap) {
   char jerr[120];
   char ticket[600];
   char *body = NULL;
-  static __thread http_result meta;
+  static http_result meta;
   json_value *v;
   const char *t;
   long long code;
@@ -551,7 +551,7 @@ quark_qr_poll(const char *token, quark_session *s, char *err, size_t errcap) {
    * inside the request, inside the parse, or on the way back. No token, no
    * body - this file is readable over FTP. */
   {
-    static __thread int npolls;
+    static int npolls;
 
     npolls++;
     boot_trace("qr poll #%d 开始", npolls);
@@ -614,9 +614,9 @@ call(const quark_session *s, const char *method, const char *path,
      const char *body, char **out, char *err, size_t errcap) {
   char url[1600];
   /* 7 KB of Cookie header, same reasoning as the session above. */
-  static __thread char headers[QUARK_COOKIE_MAX + 640];
+  static char headers[QUARK_COOKIE_MAX + 640];
   http_req req;
-  static __thread http_result res;
+  static http_result res;
   body_buf buf;
   int rc;
   char *q;

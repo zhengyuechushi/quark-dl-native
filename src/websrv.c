@@ -218,9 +218,21 @@ websrv_listen(unsigned short port) {
   g_stop_requested = 0;
   g_listen_fd = srvfd;
 
-  if(!(httpd = MHD_start_daemon(MHD_USE_THREAD_PER_CONNECTION | MHD_USE_ITC |
-                                MHD_USE_NO_LISTEN_SOCKET |
-                                MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_TURBO,
+  /* One polling thread, not one thread per connection.
+   *
+   * Two reasons, and the first one is what a console actually showed: every
+   * handler here needs a handful of kilobytes of scratch space, and a worker
+   * thread that is created per connection has whatever stack the platform
+   * hands it, which on this payload is not something to bet a login flow on.
+   * With a single thread the scratch buffers live in .bss instead of a stack.
+   *
+   * The second: `__thread` is not usable here. This toolchain links the ELF
+   * with no PT_TLS segment, so thread-locals silently degrade to ordinary
+   * globals - shared, with no diagnostic. Serialising the handlers makes them
+   * genuinely private. Downloads keep their own threads and are untouched;
+   * what gets serialised is page requests, which are short and few. */
+  if(!(httpd = MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ITC |
+                                MHD_USE_NO_LISTEN_SOCKET | MHD_USE_TURBO,
                                 0, NULL, NULL, &websrv_on_request, NULL,
                                 MHD_OPTION_CONNECTION_MEMORY_LIMIT,
                                 (size_t)HTTP_CONNECTION_MEMORY_LIMIT,

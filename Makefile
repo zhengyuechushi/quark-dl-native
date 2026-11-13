@@ -23,7 +23,7 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
-APP_VERSION := 0.4.3
+APP_VERSION := 0.4.4
 BUILD_ID    ?= dev
 PYTHON      ?= python3
 STRIP       ?= $(PS5_PAYLOAD_SDK)/bin/prospero-strip

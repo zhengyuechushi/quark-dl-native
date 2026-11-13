@@ -7,6 +7,8 @@
 
 #include "httpc.h"
 
+#include <pthread.h>
+
 #include "cookie.h"
 
 #include <stdarg.h>
@@ -20,6 +22,41 @@
 #include "net.h"
 
 #define HDR_MAX 8192
+
+/* The request header buffer, one per thread.
+ *
+ * Downloads run on their own threads and page requests on libmicrohttpd's, and
+ * both reach this function, so a plain static would let one thread rewrite the
+ * other's request while it is on the wire. A stack array of this size is what
+ * the console could not afford in the first place. A pthread key gives each
+ * thread a buffer that lives exactly as long as the thread. */
+static pthread_key_t g_head_key;
+static pthread_once_t g_head_once = PTHREAD_ONCE_INIT;
+
+static void
+head_release(void *p) {
+  free(p);
+}
+
+static void
+head_key_init(void) {
+  pthread_key_create(&g_head_key, head_release);
+}
+
+static char *
+head_buffer(void) {
+  char *p;
+
+  pthread_once(&g_head_once, head_key_init);
+  p = (char *)pthread_getspecific(g_head_key);
+  if(!p) {
+    p = (char *)calloc(1, HDR_MAX);
+    if(p) {
+      pthread_setspecific(g_head_key, p);
+    }
+  }
+  return p;
+}
 #define HLINE_MAX 2048
 
 typedef struct {
@@ -377,11 +414,14 @@ http_perform(const http_req *req, http_result *out) {
     char path[800];
     char base[320];
     char hosthdr[240];
-    /* Not on the stack. The connect path for a scan login nests five deep
-     * (api handler -> poll -> exchange -> fetch -> here) and every frame in it
-     * held a few kilobytes; on a worker thread whose stack is not ours to size,
-     * that is how a program dies exactly one step after showing a QR code. */
-    static __thread char head[HDR_MAX];
+    /* See head_buffer(): off the stack, and private to this thread. */
+    char *head = head_buffer();
+
+    if(!head) {
+      snprintf(out->err, sizeof(out->err), "内存不足");
+      out->total_ms = now_ms() - t_start;
+      return -1;
+    }
     char line[HLINE_MAX];
     size_t used = 0;
     net_conn *c;
