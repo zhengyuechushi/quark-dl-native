@@ -50,6 +50,13 @@ typedef struct {
   char head[HDR_MAX];
   char url[URL_MAX];
   char path[PATH_MAX_];
+  /* The body reader's buffer. It lives here, off the stack, because a large
+   * one is the difference between a big file downloading at full speed and
+   * crawling: a 4 KB stack buffer forces one read() + one write() system call
+   * per 4 KB, which a multi-gigabyte file turns into a million of each. The
+   * web workers run on a platform stack that is small and not ours to set, so
+   * the reader's buffer cannot be a stack array. */
+  unsigned char body[65536];
 } tls_scratch;
 
 static pthread_key_t g_scr_key;
@@ -85,7 +92,8 @@ typedef struct {
   net_conn *c;
   size_t pos;
   size_t len;
-  unsigned char buf[4096];
+  size_t cap;
+  unsigned char *buf; /* points into the thread's scratch body[] */
 } reader;
 
 static long long
@@ -271,7 +279,7 @@ rd_fill(reader *r, char *err, size_t cap) {
   }
   r->pos = 0;
   r->len = 0;
-  n = net_read(r->c, r->buf, sizeof(r->buf), err, cap);
+  n = net_read(r->c, r->buf, r->cap, err, cap);
   if(n < 0) {
     return -1;
   }
@@ -570,6 +578,8 @@ http_perform(const http_req *req, http_result *out) {
 
     memset(&r, 0, sizeof(r));
     r.c = c;
+    r.cap = sizeof(sc->body);
+    r.buf = sc->body;
     rc = rd_line(&r, line, sizeof(line), out->err, sizeof(out->err));
     if(rc <= 0) {
       net_close(c);

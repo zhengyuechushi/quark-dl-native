@@ -724,6 +724,16 @@ connect_to(const char *ip, unsigned short port, int timeout_ms, char *err,
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
   }
+  /* A large receive buffer lets the kernel absorb a burst without the reader
+   * stalling between recv calls. The 4 KB reader this once used is exactly why
+   * a big file crawled while a small one finished in a blink: every recv that
+   * returns little forces another round trip through the TLS layer. 256 KB is
+   * a middle ground the console's kernel accepts and is not a floor or a cap,
+   * so a refusal is ignored. */
+  {
+    int rsz = 256 * 1024;
+    setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rsz, sizeof(rsz));
+  }
   return fd;
 }
 

@@ -145,6 +145,18 @@ jobs:
           test "$n" = "2"
           echo ok
 
+      # A 4 KB body reader forces one read() + write() system call per 4 KB,
+      # which a big file turns into a million of each and crawls while a small
+      # file finishes in a blink. The reader must stay on the large scratch
+      # buffer, not shrink back to a stack array.
+      - name: Body reader stays on a large buffer
+        run: |
+          set -e
+          grep -q "unsigned char body\[65536\]" src/httpc.c
+          grep -q "r.cap = sizeof(sc->body)" src/httpc.c
+          grep -q "SO_RCVBUF" src/net.c
+          echo ok
+
       # The page ships inside the ELF, so what it does is invisible until it is
       # on a console - and "I picked a file, pressed the button, nothing
       # happened" is exactly the report that blind spot produces. This runs the
