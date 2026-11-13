@@ -139,6 +139,16 @@ jobs:
       - name: Download engine and TLS
         run: bash tools/test-stage2.sh
 
+      # The JSON reader cannot be exercised against the real service without a
+      # cookie, and a broken parser fails exactly like a wrong field name does:
+      # an empty directory. So it gets tested on its own, against the shapes the
+      # API returns and the malformed ones it must refuse.
+      - name: JSON parser
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -Isrc -o /tmp/test-json \
+             tools/test-json.c src/json.c
+          /tmp/test-json
+
       - name: Log on failure
         if: failure()
         run: |

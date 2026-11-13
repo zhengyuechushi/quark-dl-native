@@ -35,6 +35,7 @@
 #include "kern.h"
 #include "net.h"
 #include "notify.h"
+#include "quark.h"
 #include "websrv.h"
 
 #define PROCESS_NAME "quark-dl.elf"
@@ -909,6 +910,9 @@ api_init(void) {
     fprintf(stderr, "quark-dl: 网络层初始化失败: %s\n", err);
   }
   dl_init(data_dir());
+  /* Same directory as the queue: cookie.txt and account.txt sit next to
+   * downloads.txt so one folder holds everything a reset has to delete. */
+  quark_init(data_dir());
   /* <data>/ca.pem is the console's only way to add a root: there is no shell to
    * export QDL_CA_FILE from. Missing file is the normal case, not an error. */
   {
@@ -931,6 +935,404 @@ api_init(void) {
 void
 api_set_port(unsigned short port) {
   g_port = port;
+}
+
+/* ------------------------------------------------------------ quark drive */
+
+static const char *
+path_arg(struct MHD_Connection *conn, const char *name) {
+  const char *v = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, name);
+
+  return (v && *v) ? v : NULL;
+}
+
+static enum MHD_Result
+api_quark_status(struct MHD_Connection *conn) {
+  quark_session s;
+  char enick[260];
+  char eerr[520];
+  char json[1100];
+
+  quark_load(&s);
+  json_escape(enick, sizeof(enick), s.nickname);
+  json_escape(eerr, sizeof(eerr), quark_last_error());
+  snprintf(json, sizeof(json),
+           "{\"ok\":true,\"logged_in\":%s,\"nickname\":\"%s\","
+           "\"total_bytes\":%lld,\"used_bytes\":%lld,\"last_error\":\"%s\"}",
+           s.valid ? "true" : "false", enick, s.total_bytes, s.used_bytes,
+           eerr);
+  return send_json(conn, MHD_HTTP_OK, json);
+}
+
+/* Body field "cookie". Verifies against the service immediately: storing a
+ * typo and reporting success would leave the user staring at an empty folder
+ * wondering which of the two things is broken. */
+static enum MHD_Result
+api_quark_login(struct MHD_Connection *conn, const char *body, size_t size) {
+  char raw[QUARK_COOKIE_MAX + 64];
+  char err[600];
+  char eerr[700];
+  char enick[260];
+  char json[1600];
+  quark_session s;
+  int saved;
+
+  if(!form_field(body, size, "cookie", raw, sizeof(raw))) {
+    return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                     "{\"ok\":false,\"error\":\"没有收到 cookie 字段\"}");
+  }
+  if(quark_set_cookie(raw, &s, err, sizeof(err))) {
+    json_escape(eerr, sizeof(eerr), err);
+    snprintf(json, sizeof(json), "{\"ok\":false,\"error\":\"%s\"}", eerr);
+    return send_json(conn, MHD_HTTP_OK, json);
+  }
+  if(quark_whoami(&s, err, sizeof(err))) {
+    /* The cookie is kept anyway. It may be the network that is down, and
+     * throwing away a probably-good cookie because the console could not reach
+     * the service would make the user paste it again for nothing. */
+    saved = quark_save(&s);
+    json_escape(eerr, sizeof(eerr), err);
+    snprintf(json, sizeof(json),
+             "{\"ok\":false,\"saved\":%s,\"error\":\"%s\",\"raw\":\"%.400s\"}",
+             saved == 0 ? "true" : "false", eerr, quark_last_raw());
+    return send_json(conn, MHD_HTTP_OK, json);
+  }
+  quark_save(&s);
+  json_escape(enick, sizeof(enick), s.nickname);
+  snprintf(json, sizeof(json),
+           "{\"ok\":true,\"nickname\":\"%s\",\"total_bytes\":%lld,"
+           "\"used_bytes\":%lld}",
+           enick, s.total_bytes, s.used_bytes);
+  return send_json(conn, MHD_HTTP_OK, json);
+}
+
+static enum MHD_Result
+api_quark_logout(struct MHD_Connection *conn, const char *method) {
+  if(strcmp(method, MHD_HTTP_METHOD_POST)) {
+    return api_not_found(conn, "/api/quark/logout");
+  }
+  quark_logout();
+  return send_json(conn, MHD_HTTP_OK, "{\"ok\":true}");
+}
+
+static enum MHD_Result
+api_quark_list(struct MHD_Connection *conn) {
+  const char *pdir = path_arg(conn, "pdir");
+  const char *pages = path_arg(conn, "page");
+  quark_session s;
+  quark_entry *entries;
+  char err[400];
+  char eerr[900];
+  char ename[900];
+  char efid[120];
+  char *out;
+  size_t cap = 320u * 1024u;
+  size_t used = 0;
+  int page = pages ? atoi(pages) : 1;
+  int total = 0;
+  int n;
+  int i;
+
+  quark_load(&s);
+  if(!s.valid) {
+    return send_json(conn, MHD_HTTP_OK,
+                     "{\"ok\":false,\"need_login\":true,"
+                     "\"error\":\"还没有登录\"}");
+  }
+  entries = (quark_entry *)calloc(200, sizeof(*entries));
+  out = (char *)malloc(cap);
+  if(!entries || !out) {
+    free(entries);
+    free(out);
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     "{\"ok\":false,\"error\":\"内存不足\"}");
+  }
+  n = quark_list(&s, pdir ? pdir : "0", page, 200, entries, 200, &total, err,
+                 sizeof(err));
+  if(n < 0) {
+    enum MHD_Result rc;
+
+    json_escape(eerr, sizeof(eerr), err);
+    snprintf(out, cap,
+             "{\"ok\":false,\"need_login\":%s,\"error\":\"%s\",\"raw\":\"%.400s\"}",
+             strstr(err, "登录") ? "true" : "false", eerr, quark_last_raw());
+    free(entries);
+    rc = send_json(conn, MHD_HTTP_OK, out);
+    free(out);
+    return rc;
+  }
+  used += (size_t)snprintf(out + used, cap - used,
+                           "{\"ok\":true,\"pdir\":\"%s\",\"page\":%d,"
+                           "\"total\":%d,\"entries\":[",
+                           pdir ? pdir : "0", page, total);
+  for(i = 0; i < n && used + 1600 < cap; i++) {
+    json_escape(efid, sizeof(efid), entries[i].fid);
+    json_escape(ename, sizeof(ename), entries[i].name);
+    used += (size_t)snprintf(out + used, cap - used,
+                             "%s{\"fid\":\"%s\",\"name\":\"%s\",\"dir\":%s,"
+                             "\"size\":%lld,\"updated_at\":%lld}",
+                             i ? "," : "", efid, ename,
+                             entries[i].is_dir ? "true" : "false",
+                             entries[i].size, entries[i].updated_at);
+  }
+  snprintf(out + used, cap - used, "]}");
+  free(entries);
+  {
+    enum MHD_Result rc = send_json(conn, MHD_HTTP_OK, out);
+
+    free(out);
+    return rc;
+  }
+}
+
+/* Body fields:
+ *   items - one "fid<TAB>name<TAB>d" per line. The trailing "d" marks a folder,
+ *           which is expanded recursively; without it the line is one file.
+ *   dir   - destination directory, may be empty
+ * A tab separates the fields because a file name may contain anything else,
+ * including the pipe that "fid|name" would have used. */
+#define QUARK_ADD_MAX 2000
+#define QUARK_BATCH 50
+
+typedef struct {
+  char fid[QUARK_FID_MAX];
+  char name[QUARK_NAME_MAX];
+} add_item;
+
+typedef struct {
+  add_item *out;
+  int count;
+  int cap;
+  int overflow;
+} collect_ctx;
+
+static int
+collect_cb(void *ctx, const quark_entry *e, const char *pdir) {
+  collect_ctx *c = (collect_ctx *)ctx;
+
+  (void)pdir;
+  if(c->count >= c->cap) {
+    /* Returning non-zero stops the walk, which is the only way to report that
+     * a folder holds more than this endpoint will take. */
+    c->overflow = 1;
+    return 1;
+  }
+  snprintf(c->out[c->count].fid, QUARK_FID_MAX, "%s", e->fid);
+  snprintf(c->out[c->count].name, QUARK_NAME_MAX, "%s", e->name);
+  c->count++;
+  return 0;
+}
+
+static enum MHD_Result
+api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
+  char *items;
+  char dest[512];
+  char err[400];
+  char eerr[700];
+  char first[400];
+  char json[1600];
+  quark_session s;
+  collect_ctx cc;
+  add_item *arr;
+  char *line;
+  int queued = 0;
+  int failed = 0;
+  int dirs = 0;
+
+  items = (char *)malloc(256u * 1024u);
+  arr = (add_item *)calloc(QUARK_ADD_MAX, sizeof(*arr));
+  if(!items || !arr) {
+    free(items);
+    free(arr);
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     "{\"ok\":false,\"error\":\"内存不足\"}");
+  }
+  if(!form_field(body, size, "items", items, 256u * 1024u)) {
+    free(items);
+    free(arr);
+    return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                     "{\"ok\":false,\"error\":\"没有收到 items 字段\"}");
+  }
+  dest[0] = 0;
+  if(form_field(body, size, "dir", dest, sizeof(dest)) && dest[0] != '/') {
+    dest[0] = 0;
+  }
+  first[0] = 0;
+  quark_load(&s);
+  if(!s.valid) {
+    free(items);
+    free(arr);
+    return send_json(conn, MHD_HTTP_OK,
+                     "{\"ok\":false,\"need_login\":true,"
+                     "\"error\":\"还没有登录\"}");
+  }
+  cc.out = arr;
+  cc.count = 0;
+  cc.cap = QUARK_ADD_MAX;
+  cc.overflow = 0;
+
+  for(line = strtok(items, "\n"); line; line = strtok(NULL, "\n")) {
+    char *tab = strchr(line, '\t');
+    char *flag = NULL;
+    const char *fid = line;
+    const char *name = NULL;
+
+    if(tab) {
+      *tab = 0;
+      name = tab + 1;
+      flag = strchr(tab + 1, '\t');
+      if(flag) {
+        *flag = 0;
+        flag++;
+      }
+    }
+    if(!line[0]) {
+      continue;
+    }
+    if(flag && flag[0] == 'd') {
+      int before = cc.count;
+
+      dirs++;
+      if(quark_walk(&s, fid, 32, collect_cb, &cc, NULL, err, sizeof(err))) {
+        failed++;
+        if(!first[0]) {
+          snprintf(first, sizeof(first), "%s: %s", name ? name : fid, err);
+        }
+        continue;
+      }
+      if(cc.count == before) {
+        /* A folder that expands to nothing is not a failure, but saying
+         * "加入 0 个文件" with no reason would be baffling. */
+        failed++;
+        if(!first[0]) {
+          snprintf(first, sizeof(first), "%s: 这个目录里没有文件",
+                   name ? name : fid);
+        }
+      }
+      continue;
+    }
+    if(cc.count >= cc.cap) {
+      cc.overflow = 1;
+      break;
+    }
+    snprintf(arr[cc.count].fid, QUARK_FID_MAX, "%s", fid);
+    snprintf(arr[cc.count].name, QUARK_NAME_MAX, "%s", name ? name : "");
+    cc.count++;
+  }
+  free(items);
+
+  if(cc.overflow) {
+    failed++;
+    if(!first[0]) {
+      snprintf(first, sizeof(first), "一次最多 %d 个文件，请分批加入",
+               QUARK_ADD_MAX);
+    }
+  }
+
+  /* Direct links come in batches: one request per file would mean a round trip
+   * and a spinner that does not move for every single file in a folder.
+   * The URL table is on the heap - fifty 2 KB strings is a hundred kilobytes,
+   * which is not something to put in a console thread's frame. */
+  {
+    int base = 0;
+    char(*urls)[QUARK_URL_MAX] =
+        (char(*)[QUARK_URL_MAX])malloc((size_t)QUARK_BATCH * QUARK_URL_MAX);
+
+    if(!urls) {
+      free(arr);
+      return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                       "{\"ok\":false,\"error\":\"内存不足\"}");
+    }
+    while(base < cc.count) {
+      const char *fids[QUARK_BATCH];
+      int n = cc.count - base;
+      int i;
+      int got;
+
+      if(n > QUARK_BATCH) {
+        n = QUARK_BATCH;
+      }
+      for(i = 0; i < n; i++) {
+        fids[i] = arr[base + i].fid;
+        urls[i][0] = 0;
+      }
+      got = quark_direct_many(&s, fids, n, (char(*)[QUARK_URL_MAX])urls, err,
+                              sizeof(err));
+      if(got < 0) {
+        failed += n;
+        if(!first[0]) {
+          snprintf(first, sizeof(first), "%s", err);
+        }
+        base += n;
+        continue;
+      }
+      for(i = 0; i < n; i++) {
+        if(!urls[i][0]) {
+          failed++;
+          if(!first[0]) {
+            snprintf(first, sizeof(first), "%s: 没有拿到直链",
+                     arr[base + i].name);
+          }
+          continue;
+        }
+        if(dl_add(urls[i], arr[base + i].name[0] ? arr[base + i].name : NULL,
+                  dest[0] ? dest : NULL, err, sizeof(err)) < 0) {
+          failed++;
+          if(!first[0]) {
+            snprintf(first, sizeof(first), "%s: %s", arr[base + i].name, err);
+          }
+          continue;
+        }
+        queued++;
+      }
+      base += n;
+    }
+    free(urls);
+  }
+  free(arr);
+  json_escape(eerr, sizeof(eerr), first);
+  {
+    char eraw[520];
+
+    json_escape(eraw, sizeof(eraw), failed ? quark_last_raw() : "");
+    snprintf(json, sizeof(json),
+             "{\"ok\":true,\"queued\":%d,\"failed\":%d,\"dirs\":%d,"
+             "\"error\":\"%s\",\"raw\":\"%s\"}",
+             queued, failed, dirs, eerr, eraw);
+    return send_json(conn, MHD_HTTP_OK, json);
+  }
+}
+
+/* Prints whatever an API path answers, as a JSON string. Deliberately not
+ * prettified: when a field name turns out to be wrong, the raw answer is what
+ * makes it obvious, and guessing at the shape is how this would otherwise cost
+ * another round trip. */
+static enum MHD_Result
+api_quark_probe(struct MHD_Connection *conn) {
+  const char *path = path_arg(conn, "path");
+  quark_session s;
+  char *out;
+  char err[400];
+
+  quark_load(&s);
+  if(!s.valid) {
+    return send_json(conn, MHD_HTTP_OK,
+                     "{\"ok\":false,\"need_login\":true,"
+                     "\"error\":\"还没有登录\"}");
+  }
+  out = (char *)malloc(320u * 1024u);
+  if(!out) {
+    return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                     "{\"ok\":false,\"error\":\"内存不足\"}");
+  }
+  quark_probe(&s, path ? path : "/1/clouddrive/member?" QUARK_COMMON, out,
+              320u * 1024u, err, sizeof(err));
+  {
+    enum MHD_Result rc = send_json(conn, MHD_HTTP_OK, out);
+
+    free(out);
+    return rc;
+  }
 }
 
 enum MHD_Result
@@ -992,6 +1394,26 @@ api_request(struct MHD_Connection *conn, const char *url, const char *method,
   }
   if(!strcmp(path, "/api/fs/list")) {
     return is_get ? api_fs_list(conn) : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/quark/status")) {
+    return is_get ? api_quark_status(conn) : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/quark/login")) {
+    return is_post ? api_quark_login(conn, body, size)
+                   : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/quark/logout")) {
+    return api_quark_logout(conn, method);
+  }
+  if(!strcmp(path, "/api/quark/list")) {
+    return is_get ? api_quark_list(conn) : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/quark/add")) {
+    return is_post ? api_quark_add(conn, body, size)
+                   : api_not_found(conn, path);
+  }
+  if(!strcmp(path, "/api/quark/probe")) {
+    return is_get ? api_quark_probe(conn) : api_not_found(conn, path);
   }
 
   return api_not_found(conn, path);

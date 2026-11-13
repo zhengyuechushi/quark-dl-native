@@ -17,8 +17,8 @@
 #include "build.h"
 #include "net.h"
 
-#define HDR_MAX 2048
-#define HLINE_MAX 600
+#define HDR_MAX 8192
+#define HLINE_MAX 2048
 
 typedef struct {
   net_conn *c;
@@ -431,7 +431,9 @@ http_perform(const http_req *req, http_result *out) {
     if(!rc) {
       rc = app(head, sizeof(head), &used, "Host: %s\r\n", hosthdr);
     }
-    if(!rc) {
+    if(!rc && req->user_agent && *req->user_agent) {
+      rc = app(head, sizeof(head), &used, "User-Agent: %s\r\n", req->user_agent);
+    } else if(!rc) {
       rc = app(head, sizeof(head), &used, "User-Agent: %s/%s\r\n", APP_NAME,
                APP_VERSION);
     }

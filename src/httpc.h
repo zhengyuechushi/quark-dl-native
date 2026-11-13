@@ -39,6 +39,7 @@ typedef struct {
   const char *body;
   size_t body_len;
   const char *extra_headers; /* raw "Name: value\r\n" lines, may be NULL */
+  const char *user_agent;  /* NULL means "<APP_NAME>/<APP_VERSION>" */
   long long range_from;    /* >0 sends Range: bytes=N- */
   http_write_cb write;     /* NULL discards the body */
   void *write_ctx;
