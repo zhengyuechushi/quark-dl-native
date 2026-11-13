@@ -32,10 +32,10 @@
 
 | 项 | 值 |
 |---|---|
-| 版本 | 0.4.0 |
+| 版本 | `Makefile` 的 `APP_VERSION`（0.4.6）；页面里的 `PAGE_V` 必须与它一致，CI 校验 |
 | build id | 见 CI 产物（ELF 里可 `grep` 到完整 sha，用来确认刷进去的是哪一版） |
 | 大小 | 约 850 KB（mbedTLS + 200 KB 根证书库 + 业务层 + 二维码编码器） |
-| CI | `elf` 与 `linux-smoke` 全绿，含 JSON 解析器、Cookie 解析与 Set-Cookie 归并单测 |
+| CI | `elf` 与 `linux-smoke` 全绿，含 JSON 解析器、Cookie 解析与 Set-Cookie 归并单测、页面行为测试 |
 
 阶段一、二在 CI 里长期成立的那几项：https 用自签 CA 通过、换一个未知 CA 被拒**并报出被拒的那张证书**、
 300 KB 逐字节一致、预置 `.part` 产生 `Range: bytes=120000-` 并续传成功、chunked 无 `Content-Length`、
