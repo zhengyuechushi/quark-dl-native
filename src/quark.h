@@ -141,12 +141,16 @@ const char *quark_download_cookie(void);
  * half-downloaded.
  *
  * The callback's `pdir` is the *relative path* of the directory that holds the
- * file ("" for the top level, "剧集/第01话" for a nested one). It is a path, not
- * a fid: the walker tracks the folder names it descended through so a download
- * can recreate the tree on disk. The file's own name is in e->name; the full
- * relative path is pdir + "/" + e->name. */
+ * file, always including the walked root itself: `root_name` (the folder's own
+ * display name) is the first segment, so a file directly inside the walked
+ * folder comes back as "剧集/第01话.mkv", not a bare "第01话.mkv". That is what
+ * lets a download recreate the tree on disk — without it, the folder you picked
+ * vanishes and its files land loose in the destination. It is a path, not a fid.
+ * The file's own name is in e->name; the full relative path is
+ * pdir + "/" + e->name. `root_name` may be NULL when the walked root should not
+ * contribute a prefix (e.g. walking the drive root). */
 typedef int (*quark_visit_cb)(void *ctx, const quark_entry *e, const char *pdir);
 
-int quark_walk(const quark_session *s, const char *pdir, int depth_limit,
-               quark_visit_cb cb, void *ctx, int *visited, char *err,
-               size_t errcap);
+int quark_walk(const quark_session *s, const char *pdir, const char *root_name,
+               int depth_limit, quark_visit_cb cb, void *ctx, int *visited,
+               char *err, size_t errcap);

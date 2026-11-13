@@ -400,6 +400,40 @@ check('点击后展开', /\bopen\b/.test(grps[0].className), grps[0].className);
 head.onclick();
 check('再点收起', !/\bopen\b/.test(grps[0].className), grps[0].className);
 
+console.log('\n勾选文件夹时，文件夹名作为 d 标记一起发出');
+/* The folder row's checkbox is the way in (its name span navigates). The name
+ * must travel as the tab field so the backend can use it as the root prefix of
+ * the recreated tree - without it the folder vanishes and its files land loose. */
+route = (method, url) => {
+  const path = url.split('?')[0];
+  if (path === '/api/quark/add') return { status: 200, text: JSON.stringify(addAnswer) };
+  const d = DEFAULTS[path];
+  return { status: 200, text: JSON.stringify(d ? d() : {}) };
+};
+requests.length = 0;
+drain(); /* settle any queued poll before the selection below */
+const listD = nodeFor('qList');
+/* The "network layer failed" test above left f1 ticked (a failure keeps the
+ * selection so the user can retry). Untick it so the folder is the only pick. */
+const f1Row = listD.children[0];
+const f1Cb = f1Row.children.find((c) => c.tagName === 'INPUT');
+if (f1Cb.checked) { f1Cb.checked = false; if (f1Cb.onchange) f1Cb.onchange(); }
+const folderRow = listD.children[1]; /* 第二季 (d1) */
+const folderCb = folderRow.children.find((c) => c.tagName === 'INPUT');
+folderCb.checked = true;
+if (folderCb.onchange) folderCb.onchange();
+check('只勾选了文件夹一行', /已选 1 项/.test(selLabel.textContent), selLabel.textContent);
+requests.length = 0;
+btn.onclick();
+const dirReq = requests.find((r) => r.url.split('?')[0] === '/api/quark/add');
+check('文件夹请求发到了 /api/quark/add', !!dirReq);
+check('items 把文件夹 id 和 d 标记一起发出',
+      !!dirReq && /items=d1%09/.test(dirReq.body) && /%09d/.test(dirReq.body),
+      dirReq && dirReq.body);
+check('items 把文件夹名当第二段发出',
+      !!dirReq && /items=d1%09%E7%AC%AC%E4%BA%8C%E5%AD%A3%09d/.test(dirReq.body),
+      dirReq && dirReq.body);
+
 console.log('');
 if (failures) {
   console.log(`${failures} 项失败`);

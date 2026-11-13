@@ -1311,9 +1311,9 @@ quark_direct_many(const quark_session *s, const char *const *fids, int n,
 /* ------------------------------------------------------------------ walk */
 
 int
-quark_walk(const quark_session *s, const char *pdir, int depth_limit,
-           quark_visit_cb cb, void *ctx, int *visited, char *err,
-           size_t errcap) {
+quark_walk(const quark_session *s, const char *pdir, const char *root_name,
+           int depth_limit, quark_visit_cb cb, void *ctx, int *visited,
+           char *err, size_t errcap) {
   /* An explicit stack rather than recursion: a deep tree on a console thread
    * with 8 KB of request headers already in the frame is a bad place to
    * recurse, and the pending list is what makes the depth limit expressible. */
@@ -1340,7 +1340,14 @@ quark_walk(const quark_session *s, const char *pdir, int depth_limit,
     return -1;
   }
   snprintf(stack[0].fid, sizeof(stack[0].fid), "%s", (pdir && pdir[0]) ? pdir : "0");
-  stack[0].rel[0] = 0;
+  /* The walked root contributes its own name as the first segment of the
+   * relative path, so a file directly inside the folder you picked still lands
+   * under a folder named after it instead of loose in the destination. */
+  if(root_name && root_name[0]) {
+    snprintf(stack[0].rel, sizeof(stack[0].rel), "%s", root_name);
+  } else {
+    stack[0].rel[0] = 0;
+  }
   stack[0].depth = 0;
   sp = 1;
 

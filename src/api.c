@@ -1449,7 +1449,9 @@ api_quark_add(struct MHD_Connection *conn, const char *body, size_t size) {
       int before = cc.count;
 
       dirs++;
-      if(quark_walk(&s, fid, 32, collect_cb, &cc, NULL, err, sizeof(err))) {
+      /* Pass the folder's own name as the root prefix, so a file directly
+       * inside it still carries "文件夹名/文件名" and recreates the tree. */
+      if(quark_walk(&s, fid, name, 32, collect_cb, &cc, NULL, err, sizeof(err))) {
         failed++;
         if(!first[0]) {
           snprintf(first, sizeof(first), "%s: %s", name ? name : fid, err);
