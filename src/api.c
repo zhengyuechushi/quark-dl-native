@@ -21,8 +21,10 @@
 
 #include "boot.h"
 
+#include <arpa/inet.h>
 #include <dirent.h>
 #include <errno.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +40,7 @@
 #include "net.h"
 #include "notify.h"
 #include "quark.h"
+#include "shell.h"
 #include "websrv.h"
 
 #define PROCESS_NAME "quark-dl.elf"
@@ -1613,6 +1616,42 @@ api_quark_probe(struct MHD_Connection *conn) {
   }
 }
 
+/* The home-screen tile (starter/) asks for the page once it knows the payload is
+ * up. Only the console itself may ask: a request from the LAN could otherwise
+ * throw a browser window onto the TV. The URL is built from the port actually
+ * bound, never taken from the request, so the tile cannot be pointed elsewhere. */
+static enum MHD_Result
+api_open_ui(struct MHD_Connection *conn, const char *method) {
+  const union MHD_ConnectionInfo *ci;
+  const struct sockaddr_in *addr;
+  char url[64];
+  int rc;
+
+  if(strcmp(method, MHD_HTTP_METHOD_POST)) {
+    return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
+                     "{\"ok\":false,\"error\":\"只接受 POST\"}");
+  }
+  ci = MHD_get_connection_info(conn, MHD_CONNECTION_INFO_CLIENT_ADDRESS);
+  addr = (ci && ci->client_addr && ci->client_addr->sa_family == AF_INET)
+             ? (const struct sockaddr_in *)ci->client_addr
+             : 0;
+  if(!addr || addr->sin_addr.s_addr != htonl(INADDR_LOOPBACK)) {
+    return send_json(conn, MHD_HTTP_FORBIDDEN,
+                     "{\"ok\":false,\"error\":\"只允许主机自身请求\"}");
+  }
+  snprintf(url, sizeof(url), "http://127.0.0.1:%u/", (unsigned)g_port);
+  rc = shell_open_url(url);
+  boot_trace("open-ui: 打开 %s -> %d", url, rc);
+  if(rc == 0) {
+    char out[96];
+
+    snprintf(out, sizeof(out), "{\"ok\":true,\"url\":\"%s\"}", url);
+    return send_json(conn, MHD_HTTP_OK, out);
+  }
+  return send_json(conn, MHD_HTTP_SERVICE_UNAVAILABLE,
+                   "{\"ok\":false,\"error\":\"无法打开系统浏览器\"}");
+}
+
 enum MHD_Result
 api_request(struct MHD_Connection *conn, const char *url, const char *method,
             const char *body, size_t size) {
@@ -1647,6 +1686,9 @@ api_request(struct MHD_Connection *conn, const char *url, const char *method,
   }
   if(!strcmp(path, "/api/exit")) {
     return is_post ? api_exit(conn) : api_exit_needs_post(conn);
+  }
+  if(!strcmp(path, "/api/open-ui")) {
+    return api_open_ui(conn, method);
   }
   if(!strcmp(path, "/api/net/selftest") || !strcmp(path, "/api/net")) {
     return is_get ? api_net_selftest(conn) : api_not_found(conn, path);

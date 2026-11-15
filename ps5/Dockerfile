@@ -11,8 +11,8 @@
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates make curl unzip python3 pkg-config clang llvm lld \
-    file binutils \
+    ca-certificates make curl unzip zip python3 pkg-config clang llvm lld \
+    file binutils zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk

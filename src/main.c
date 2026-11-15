@@ -39,9 +39,10 @@
 
 /* 8888 is taken by other payloads on this console (ps5-web-file-manager uses it
  * by default), and a silent step to 8889 was the reason a browser could reach a
- * different plugin's UI at the address it was told to open. Serve on 8765 and
- * only walk forward a short distance, so the port stays predictable. */
-#define DEFAULT_PORT 8765
+ * different plugin's UI at the address it was told to open. Serve on 8520 and
+ * only walk forward a short distance, so the port stays predictable: the home
+ * screen tile (starter/) probes this same range when it asks for the page. */
+#define DEFAULT_PORT 8520
 #define PORT_SPAN 32
 
 static int

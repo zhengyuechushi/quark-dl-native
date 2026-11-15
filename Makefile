@@ -23,7 +23,7 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
-APP_VERSION := 0.10.0
+APP_VERSION := 0.11.0
 BUILD_ID    ?= dev
 PYTHON      ?= python3
 STRIP       ?= $(PS5_PAYLOAD_SDK)/bin/prospero-strip
@@ -48,12 +48,13 @@ BIN       := quark-dl_v$(APP_VERSION).elf
 LINUX_BIN := quark-dl-linux
 SRCS      := src/main.c src/websrv.c src/api.c src/kern.c src/asset.c src/notify.c \
              src/net.c src/httpc.c src/dl.c src/json.c src/cookie.c src/quark.c \
-             src/boot.c
+             src/boot.c src/shell.c
 HEADERS   := $(wildcard src/*.h)
 
-# icon0.png is the home-screen tile, served at /favicon.ico but registered by an
-# installer. ca.pem is compiled into the binary by gen-ca-module.py instead of
-# being published as a static asset.
+# icon0.png is the page icon served at /favicon.ico; it is also the source of the
+# home-screen tile's icon (starter/sce_sys/icon0.png) when the native title is
+# built. ca.pem is compiled into the binary by gen-ca-module.py instead of being
+# published as a static asset.
 ASSETS   := $(filter-out assets/icon0.png assets/ca.pem,$(wildcard assets/*))
 GEN_SRCS := $(patsubst assets/%,gen/%, $(ASSETS:=.c)) gen/ca_bundle.c
 
@@ -65,6 +66,10 @@ CFLAGS += $(TLS_CFLAGS)
 LDFLAGS := -Wl,--gc-sections
 LDADD   := `$(PKG_CONFIG) libmicrohttpd --libs`
 LDADD   += $(TLS_LIBS)
+# sceSystemServiceLaunchWebBrowser (src/shell.c) is a stub in this system
+# library. Console target only: the host build compiles the -1 fallback and must
+# not look for a PS5 library.
+LDADD   += -L$(PS5_PAYLOAD_SDK)/target/lib -lSceSystemService
 
 LINUX_CFLAGS := -O1 -g -Wall -Werror -Wno-format-truncation -Isrc \
                 -DAPP_VERSION=\"$(APP_VERSION)\" -DBUILD_ID=\"$(BUILD_ID)\"

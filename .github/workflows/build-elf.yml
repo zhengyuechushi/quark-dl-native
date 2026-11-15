@@ -12,9 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build PS5 ELF in Docker
+      - name: Build PS5 ELF and the home-screen tile in Docker
         env:
           BUILD_ID: ${{ github.sha }}
+          QDL_BUILD_TILE: "1"
         run: bash ps5/build.sh
 
       - name: Resolve the versioned ELF name
@@ -76,12 +77,57 @@ jobs:
           # relative path must have its parent directory made on the way down.
           # This string is the failure path of that mkdirs.
           grep -aqF "无法创建目录" "$ELF" || { echo "relative-path mkdir missing"; exit 1; }
+          # The home-screen tile starts the payload and then asks it for the page
+          # over this endpoint. Without it the user gets a notification with an
+          # address to type - which is the whole thing the tile exists to avoid.
+          grep -aqF "/api/open-ui" "$ELF" || { echo "open-ui endpoint missing"; exit 1; }
+          grep -aqF "sceSystemServiceLaunchWebBrowser" "$ELF" || { echo "browser launcher missing"; exit 1; }
           echo "ok"
+
+      - name: Verify the home-screen tile
+        run: |
+          set -e
+          D=dist/QDLK85200
+          for f in eboot.bin sce_module/libc.prx sce_sys/param.json sce_sys/icon0.png; do
+            test -s "$D/$f" || { echo "missing $D/$f"; exit 1; }
+          done
+          ls -l "$D" "$D/sce_sys" "$D/sce_module"
+          # eboot.bin 必须是签名过的 FSELF，不是裸 ELF：主机加载器只收前者。
+          python3 - "$D/eboot.bin" <<'PY'
+          import struct, sys
+          with open(sys.argv[1], 'rb') as f:
+              magic = struct.unpack('<I', f.read(4))[0]
+          assert magic == 0x1D3D154F, 'eboot.bin is not a signed FSELF: %08x' % magic
+          print('eboot.bin is a signed FSELF')
+          PY
+          # 身份必须是我们这一个，否则会和别的 homebrew 抢同一块磁贴。
+          grep -q '"titleId": "QDLK85200"' "$D/sce_sys/param.json"
+          # 磁贴里嵌着 payload：没有 payload 的启动器点了只会弹一条错误通知。
+          grep -aqF "quark-dl.elf" "$D/eboot.bin" || { echo "payload not embedded"; exit 1; }
+          # PS5 主屏幕要 512x512 的 icon0.png。
+          python3 - "$D/sce_sys/icon0.png" <<'PY'
+          import struct, sys
+          with open(sys.argv[1], 'rb') as f:
+              head = f.read(33)
+          w, h = struct.unpack('>II', head[16:24])
+          assert (w, h) == (512, 512), 'icon0.png is %dx%d' % (w, h)
+          print('icon0.png 512x512')
+          PY
+          unzip -l quark-dl-tile_v*.zip
+          echo ok
 
       - uses: actions/upload-artifact@v4
         with:
           name: quark-dl-elf
           path: ${{ steps.elf.outputs.name }}
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quark-dl-tile
+          path: |
+            quark-dl-tile_v*.zip
+            dist/QDLK85200/**
           if-no-files-found: error
 
   # The console-specific parts (SYS_thr_set_name, sysctl, notifications) cannot be
@@ -228,7 +274,7 @@ jobs:
       - name: Endpoints and clean exit
         run: |
           set -e
-          PORT=8765
+          PORT=8520
           base="http://127.0.0.1:$PORT"
           QDL_DATA_DIR="$PWD/.smoke-data" QDL_DEFAULT_DIR="$PWD/.smoke-dl" \
             ./quark-dl-linux > server.log 2>&1 &
@@ -243,14 +289,14 @@ jobs:
           echo
           grep -q '"ok":true' health.json
           grep -q '"build":"smoke"' health.json
-          grep -q '"port":8765' health.json
+          grep -q '"port":8520' health.json
 
           echo "--- diag as json (what scripts get) ---"
           curl -fsS "$base/api/diag?format=json" | tee diag.json
           echo
           grep -q '"expected":"quark-dl.elf"' diag.json
-          grep -q '"port":8765' diag.json
-          grep -q '"host":"127.0.0.1:8765"' diag.json
+          grep -q '"port":8520' diag.json
+          grep -q '"host":"127.0.0.1:8520"' diag.json
           grep -q '"tls":"mbedtls' diag.json
           curl -sS -D ct-json.txt -o /dev/null "$base/api/diag"
           grep -qi '^content-type: application/json' ct-json.txt
@@ -322,7 +368,7 @@ jobs:
           grep -q "ELF 已加载" .smoke-data/boot.log
           grep -q "main 进入" .smoke-data/boot.log
           grep -q "api_init 完成" .smoke-data/boot.log
-          grep -q "监听端口 8765" .smoke-data/boot.log
+          grep -q "监听端口 8520" .smoke-data/boot.log
           # Smoke has no login, so the queue must say so out loud. A silent
           # "no cookie" is what produced 412s that took a build to diagnose.
           grep -q "下载登录头：没有会话" .smoke-data/boot.log
