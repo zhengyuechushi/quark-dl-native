@@ -15,6 +15,7 @@
 | `gen-asset-module.py` | 同名文件 | 未改动 |
 | `install-libmicrohttpd.sh` | 同名文件 | 未改动 |
 | `src/main.c` 的启动序列 | `src/main.c` | 进程名、端口探测、同名实例清理、监听循环保留原逻辑 |
+| `src/launcher.c` / `src/launcher.h` | `src/app_installer.c`（`install_file`、`update_launcher_port`、`/user/app/<TID>/sce_sys` 布局） | 改为按当前监听端口注册网页应用条目；调用方式对齐 SDK 自带 `samples/install_app`，直接链 `-lSceAppInstUtil` 而非按 NID 解析内核符号 |
 | `LICENSE` | 项目 LICENSE | GPL-3.0 全文 |
 
 阶段二新增、为本工程新写：`src/net.c`（socket/DNS/TLS 封装）、`src/httpc.c`（HTTP/1.1 客户端）、

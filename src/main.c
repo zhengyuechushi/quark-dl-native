@@ -31,6 +31,7 @@
 #include "boot.h"
 #include "build.h"
 #include "dl.h"
+#include "launcher.h"
 #include "notify.h"
 #include "websrv.h"
 
@@ -40,8 +41,9 @@
 /* 8888 is taken by other payloads on this console (ps5-web-file-manager uses it
  * by default), and a silent step to 8889 was the reason a browser could reach a
  * different plugin's UI at the address it was told to open. Serve on 8520 and
- * only walk forward a short distance, so the port stays predictable: the home
- * screen tile (starter/) probes this same range when it asks for the page. */
+ * only walk forward a short distance, so the port stays predictable: the
+ * home-screen entry's deeplinkUri is rewritten to whatever port was taken
+ * (src/launcher.c), so the icon keeps pointing at this server. */
 #define DEFAULT_PORT 8520
 #define PORT_SPAN 32
 
@@ -213,6 +215,15 @@ main(int argc, char **argv) {
     api_set_port(port);
 
 #ifdef __SCE__
+    /* 主屏幕条目：运行时用系统的 AppInstUtil 注册一个网页应用，点它由系统
+     * 自己开浏览器到 <本机>:<port>。失败只记日志，服务该起还得起 —— 图标
+     * 是加分项，不是启动前提。 */
+    if(launcher_install_if_needed(port)) {
+      boot_trace("注册主屏幕条目失败: %s", launcher_status());
+    } else {
+      boot_trace("主屏幕条目 %s: %s", launcher_title_id(), launcher_status());
+    }
+
     if(notified_port != port) {
       notify_user("Quark DL %s\n端口: %u\n进程: %s",
                   BUILD_ID, (unsigned)port, PROCESS_NAME);

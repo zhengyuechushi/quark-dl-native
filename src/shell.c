@@ -1,11 +1,10 @@
 /* Opening the console's own browser.
  *
- * A payload loaded through the ELF loader has no tile of its own: the user sees
- * a notification with an address and has to type it into the browser. The
- * home-screen tile (starter/) fixes the entry point, but the tile is a separate
- * process that knows neither the payload's port nor its session - the payload
- * does. So the tile asks, and this file is the only thing in the payload that
- * talks to the system UI.
+ * A payload loaded through the ELF loader has no entry of its own, and the
+ * home-screen icon the payload registers (src/launcher.c) is a web-app deeplink:
+ * the system opens the browser itself, so nothing here is needed for that path.
+ * What remains is the remote case - a phone or a desktop on the same network
+ * asking the TV to show the page over /api/open-ui.
  *
  * The SDK ships sceSystemServiceLaunchWebBrowser as a stub in
  * libSceSystemService; the Makefile links that library for the console target

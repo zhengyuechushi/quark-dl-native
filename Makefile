@@ -23,7 +23,9 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
-APP_VERSION := 0.11.0
+APP_VERSION := 0.12.0
+# 主屏幕条目的 titleId，必须与 assets/param.json 的 titleId 逐字一致。
+TITLE_ID    := QDLK85200
 BUILD_ID    ?= dev
 PYTHON      ?= python3
 STRIP       ?= $(PS5_PAYLOAD_SDK)/bin/prospero-strip
@@ -48,31 +50,33 @@ BIN       := quark-dl_v$(APP_VERSION).elf
 LINUX_BIN := quark-dl-linux
 SRCS      := src/main.c src/websrv.c src/api.c src/kern.c src/asset.c src/notify.c \
              src/net.c src/httpc.c src/dl.c src/json.c src/cookie.c src/quark.c \
-             src/boot.c src/shell.c
+             src/boot.c src/shell.c src/launcher.c
 HEADERS   := $(wildcard src/*.h)
 
-# icon0.png is the page icon served at /favicon.ico; it is also the source of the
-# home-screen tile's icon (starter/sce_sys/icon0.png) when the native title is
-# built. ca.pem is compiled into the binary by gen-ca-module.py instead of being
-# published as a static asset.
-ASSETS   := $(filter-out assets/icon0.png assets/ca.pem,$(wildcard assets/*))
+# icon0.png 和 param.json 由 launcher.c 用 .incbin 直接嵌进 ELF：前者同时是
+# 主屏幕图标和页面 favicon，后者是条目描述。两者都不能当普通页面发布，所以
+# 从 ASSETS 里排掉；ca.pem 走 gen-ca-module.py，也不走这条路。
+ASSETS   := $(filter-out assets/icon0.png assets/ca.pem assets/param.json,$(wildcard assets/*))
 GEN_SRCS := $(patsubst assets/%,gen/%, $(ASSETS:=.c)) gen/ca_bundle.c
 
 CFLAGS := -Oz -flto=thin -fno-asynchronous-unwind-tables -fno-unwind-tables \
           -Wall -Werror -ffunction-sections -fdata-sections -Isrc \
-          -DAPP_VERSION=\"$(APP_VERSION)\" -DBUILD_ID=\"$(BUILD_ID)\"
+          -DAPP_VERSION=\"$(APP_VERSION)\" -DBUILD_ID=\"$(BUILD_ID)\" \
+          -DTITLE_ID=\"$(TITLE_ID)\"
 CFLAGS += `$(PKG_CONFIG) libmicrohttpd --cflags`
 CFLAGS += $(TLS_CFLAGS)
 LDFLAGS := -Wl,--gc-sections
 LDADD   := `$(PKG_CONFIG) libmicrohttpd --libs`
 LDADD   += $(TLS_LIBS)
-# sceSystemServiceLaunchWebBrowser (src/shell.c) is a stub in this system
-# library. Console target only: the host build compiles the -1 fallback and must
-# not look for a PS5 library.
-LDADD   += -L$(PS5_PAYLOAD_SDK)/target/lib -lSceSystemService
+# src/shell.c (sceSystemServiceLaunchWebBrowser) and src/launcher.c
+# (sceAppInstUtilInitialize / AppInstallTitleDir) are stubs in these system
+# libraries. Console target only: the host build compiles the -1 / no-op
+# fallbacks and must not look for PS5 libraries.
+LDADD   += -L$(PS5_PAYLOAD_SDK)/target/lib -lSceSystemService -lSceAppInstUtil
 
 LINUX_CFLAGS := -O1 -g -Wall -Werror -Wno-format-truncation -Isrc \
-                -DAPP_VERSION=\"$(APP_VERSION)\" -DBUILD_ID=\"$(BUILD_ID)\"
+                -DAPP_VERSION=\"$(APP_VERSION)\" -DBUILD_ID=\"$(BUILD_ID)\" \
+                -DTITLE_ID=\"$(TITLE_ID)\"
 LINUX_CFLAGS += `$(HOST_PKG_CONFIG) libmicrohttpd --cflags`
 LINUX_CFLAGS += $(TLS_CFLAGS)
 LINUX_LDADD  := `$(HOST_PKG_CONFIG) libmicrohttpd --libs` -pthread $(TLS_LIBS)
@@ -105,7 +109,8 @@ gen/%.c: assets/% gen-asset-module.py | gen
 gen/ca_bundle.c: assets/ca.pem gen-ca-module.py | gen
 	$(PYTHON) gen-ca-module.py $< -o $@
 
-$(BIN): $(SRCS) $(HEADERS) $(GEN_SRCS) Makefile
+# param.json / icon0.png are .incbin'd by launcher.c, so they are inputs too.
+$(BIN): $(SRCS) $(HEADERS) $(GEN_SRCS) assets/param.json assets/icon0.png Makefile
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRCS) $(GEN_SRCS) $(LDADD)
 	$(STRIP) $@
 	@echo "built $(BIN) $$(wc -c < $(BIN)) bytes, build $(BUILD_ID)"

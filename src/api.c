@@ -1616,10 +1616,14 @@ api_quark_probe(struct MHD_Connection *conn) {
   }
 }
 
-/* The home-screen tile (starter/) asks for the page once it knows the payload is
- * up. Only the console itself may ask: a request from the LAN could otherwise
- * throw a browser window onto the TV. The URL is built from the port actually
- * bound, never taken from the request, so the tile cannot be pointed elsewhere. */
+/* Asks the console's own browser to open the page. Only the console itself may
+ * ask: a request from the LAN could otherwise throw a browser window onto the
+ * TV. The URL is built from the port actually bound, never taken from the
+ * request, so the caller cannot point it elsewhere.
+ *
+ * The home-screen entry no longer needs this - the system opens deeplinkUri on
+ * its own - but it stays as the remote path: a phone or a desktop on the same
+ * network can call it to bring the UI up on the TV. */
 static enum MHD_Result
 api_open_ui(struct MHD_Connection *conn, const char *method) {
   const union MHD_ConnectionInfo *ci;

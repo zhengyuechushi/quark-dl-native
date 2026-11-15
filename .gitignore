@@ -9,11 +9,3 @@ server.log
 .smoke-data/
 .smoke-dl/
 deliverables-stage*/
-
-# 桌面磁贴的构建产物：内嵌的 payload 永远是同一次构建产出的 ELF，签名的
-# eboot.bin 也只对那次构建有意义，两者都不进仓库。
-starter/payload.elf
-starter/eboot.bin
-starter/build/
-dist/
-quark-dl-tile_v*.zip

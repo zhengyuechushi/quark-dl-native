@@ -12,10 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build PS5 ELF and the home-screen tile in Docker
+      - name: Build PS5 ELF in Docker
         env:
           BUILD_ID: ${{ github.sha }}
-          QDL_BUILD_TILE: "1"
         run: bash ps5/build.sh
 
       - name: Resolve the versioned ELF name
@@ -77,35 +76,35 @@ jobs:
           # relative path must have its parent directory made on the way down.
           # This string is the failure path of that mkdirs.
           grep -aqF "无法创建目录" "$ELF" || { echo "relative-path mkdir missing"; exit 1; }
-          # The home-screen tile starts the payload and then asks it for the page
-          # over this endpoint. Without it the user gets a notification with an
-          # address to type - which is the whole thing the tile exists to avoid.
+          # The home-screen entry is registered at runtime (launcher.c), so the
+          # ELF must carry the description, the icon and the titleId. /api/open-ui
+          # stays as the remote path for bringing the page up on the TV.
           grep -aqF "/api/open-ui" "$ELF" || { echo "open-ui endpoint missing"; exit 1; }
           grep -aqF "sceSystemServiceLaunchWebBrowser" "$ELF" || { echo "browser launcher missing"; exit 1; }
           echo "ok"
 
-      - name: Verify the home-screen tile
+      - name: Verify the home-screen entry payload
+        env:
+          ELF: ${{ steps.elf.outputs.name }}
         run: |
           set -e
-          D=dist/QDLK85200
-          for f in eboot.bin sce_module/libc.prx sce_sys/param.json sce_sys/icon0.png; do
-            test -s "$D/$f" || { echo "missing $D/$f"; exit 1; }
-          done
-          ls -l "$D" "$D/sce_sys" "$D/sce_module"
-          # eboot.bin 必须是签名过的 FSELF，不是裸 ELF：主机加载器只收前者。
-          python3 - "$D/eboot.bin" <<'PY'
-          import struct, sys
-          with open(sys.argv[1], 'rb') as f:
-              magic = struct.unpack('<I', f.read(4))[0]
-          assert magic == 0x1D3D154F, 'eboot.bin is not a signed FSELF: %08x' % magic
-          print('eboot.bin is a signed FSELF')
-          PY
-          # 身份必须是我们这一个，否则会和别的 homebrew 抢同一块磁贴。
-          grep -q '"titleId": "QDLK85200"' "$D/sce_sys/param.json"
-          # 磁贴里嵌着 payload：没有 payload 的启动器点了只会弹一条错误通知。
-          grep -aqF "quark-dl.elf" "$D/eboot.bin" || { echo "payload not embedded"; exit 1; }
-          # PS5 主屏幕要 512x512 的 icon0.png。
-          python3 - "$D/sce_sys/icon0.png" <<'PY'
+          # The entry is a web-app shortcut written by the payload itself into
+          # /user/app/<TITLEID>/sce_sys and then handed to AppInstUtil. Nothing
+          # here is signed: the console's own installer does the work.
+          grep -aqF '"applicationCategoryType": 65536' "$ELF" || { echo "param.json not embedded"; exit 1; }
+          grep -aqF '"deeplinkUri": "http://127.0.0.1:8520/"' "$ELF" || { echo "deeplink missing"; exit 1; }
+          grep -aqF '/user/app/QDLK85200' "$ELF" || { echo "launch dir missing"; exit 1; }
+          # icon0.png is .incbin'd whole, so the PNG signature must be readable.
+          grep -aqF "PNG" "$ELF" || { echo "icon0.png not embedded"; exit 1; }
+          # The titleId in the binary and in param.json must agree, or the entry
+          # is installed under one id and updated under another.
+          T=$(grep -o '"titleId": *"[A-Z0-9]*"' assets/param.json | grep -o '"[A-Z0-9]\{9\}"' | head -1 | tr -d '"')
+          echo "titleId in param.json: $T"
+          test "$T" = QDLK85200
+          grep -aqF "$T" "$ELF" || { echo "titleId not embedded"; exit 1; }
+          # PS5 wants a square 512x512 icon. Checked on the source asset because
+          # that is the byte-for-byte copy that ends up on the console.
+          python3 - assets/icon0.png <<'PY'
           import struct, sys
           with open(sys.argv[1], 'rb') as f:
               head = f.read(33)
@@ -113,21 +112,12 @@ jobs:
           assert (w, h) == (512, 512), 'icon0.png is %dx%d' % (w, h)
           print('icon0.png 512x512')
           PY
-          unzip -l quark-dl-tile_v*.zip
           echo ok
 
       - uses: actions/upload-artifact@v4
         with:
           name: quark-dl-elf
           path: ${{ steps.elf.outputs.name }}
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: quark-dl-tile
-          path: |
-            quark-dl-tile_v*.zip
-            dist/QDLK85200/**
           if-no-files-found: error
 
   # The console-specific parts (SYS_thr_set_name, sysctl, notifications) cannot be
@@ -261,6 +251,28 @@ jobs:
           grep -q "dl_add(NULL, arr\[i\].fid" src/api.c
           # the persisted queue carries the fid field
           grep -q "t->fid, t->url" src/dl.c
+          echo ok
+
+      # The home-screen icon is produced by the payload registering a web-app
+      # entry with the console's own installer, not by shipping a signed
+      # eboot.bin. Both halves matter: without the write the entry has no icon,
+      # without the AppInstUtil call the files sit in /user/app unregistered.
+      - name: Home-screen entry is registered at runtime
+        run: |
+          set -e
+          grep -q "launcher_install_if_needed(port)" src/main.c
+          grep -q "src/launcher.c" Makefile
+          grep -q 'LAUNCH_DIR "/sce_sys"' src/launcher.c
+          grep -q "sceAppInstUtilAppInstallTitleDir" src/launcher.c
+          grep -q "sceAppInstUtilInitialize" src/launcher.c
+          grep -q "assets/param.json" src/launcher.c
+          grep -q "assets/icon0.png" src/launcher.c
+          grep -q '^TITLE_ID    := QDLK85200' Makefile
+          grep -q '"titleId": "QDLK85200"' assets/param.json
+          grep -q '"deeplinkUri": "http://127.0.0.1:8520/"' assets/param.json
+          # A failure to register must not stop the server: the icon is an
+          # extra, and a boot that dies here would take the whole app with it.
+          grep -A4 "launcher_install_if_needed(port)" src/main.c | grep -q "注册主屏幕条目失败"
           echo ok
 
       # The page ships inside the ELF, so what it does is invisible until it is
