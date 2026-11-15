@@ -444,7 +444,7 @@ check('items 把文件夹名当第二段发出',
 console.log('\n暂停/继续/取消 与 速度显示');
 /* A running task shows 暂停 + 取消, and its meta line carries a speed. */
 DEFAULTS['/api/dl/list'] = () => ({
-  ok: true, limit: 2,
+  ok: true, limit_drive: 2, limit_link: 2,
   tasks: [
     { id: 10, state: 'running', done: 5000000, total: 10000000, attempts: 1, speed: 2400000, name: '剧集/第01话.mkv', dir: '/data/homebrew', exists: null },
     { id: 11, state: 'queued', done: 0, total: 50, attempts: 0, speed: 0, name: '单文件.bin', dir: '/data/homebrew', exists: null },
@@ -485,7 +485,7 @@ requests.length = 0;
 
 /* 暂停态的任务显示「继续」。触发一次 pollQueue 渲染（借 clear 按钮的回调）。 */
 DEFAULTS['/api/dl/list'] = () => ({
-  ok: true, limit: 2,
+  ok: true, limit_drive: 2, limit_link: 2,
   tasks: [
     { id: 10, state: 'paused', done: 5000000, total: 10000000, attempts: 1, speed: 0, name: '剧集/第01话.mkv', dir: '/data/homebrew', exists: null },
   ],
@@ -505,12 +505,37 @@ const resumeReq = requests.find((r) => r.url.split('?')[0] === '/api/dl/resume')
 check('点继续发到 /api/dl/resume', !!resumeReq);
 
 console.log('\n并发数选择器');
-/* Changing the selector posts the limit to /api/settings. */
+/* Each page has its own budget, so the selector must say which one it is
+ * changing and must not smuggle the directory along with it. */
+requests.length = 0;
 const limitSel = nodeFor('limitSel');
 limitSel.value = '3';
 if (limitSel.onchange) limitSel.onchange();
 const setReq = requests.find((r) => r.url.split('?')[0] === '/api/settings' && /limit=3/.test(r.body));
-check('改并发发 limit=3 到 /api/settings', !!setReq, setReq && setReq.body);
+check('改网盘并发发 limit=3 到 /api/settings', !!setReq, setReq && setReq.body);
+check('网盘并发带 src=drive', !!setReq && /(^|&)src=drive(&|$)/.test(setReq.body),
+      setReq && setReq.body);
+check('改并发不再连带提交目录', !!setReq && !/dir=/.test(setReq.body),
+      setReq && setReq.body);
+drain();
+
+/* The settings reply carries both budgets, so each selector echoes its own. */
+DEFAULTS['/api/settings'] = () => ({
+  ok: true, dir: '/data/homebrew/Quarkdownload', limit_drive: 2, limit_link: 4,
+  tasks: 0, running: 0,
+});
+
+requests.length = 0;
+const limitSel2 = nodeFor('limitSel2');
+limitSel2.value = '4';
+if (limitSel2.onchange) limitSel2.onchange();
+const setReq2 = requests.find((r) => r.url.split('?')[0] === '/api/settings' && /limit=4/.test(r.body));
+check('直链页也有并发选择器，改它发 limit=4', !!setReq2, setReq2 && setReq2.body);
+check('直链并发带 src=link', !!setReq2 && /(^|&)src=link(&|$)/.test(setReq2.body),
+      setReq2 && setReq2.body);
+drain();
+check('直链并发在原处回显本页那份', /并发数已设为 4/.test(nodeFor('limitState2').textContent),
+      nodeFor('limitState2').textContent);
 
 console.log('\n直链下载页');
 /* 0.12.4: this pane is now usable on its own - the queue button sits under the
@@ -550,7 +575,7 @@ function allText(node) {
 }
 
 DEFAULTS['/api/dl/list'] = () => ({
-  ok: true, limit: 3,
+  ok: true, limit_drive: 4, limit_link: 3,
   tasks: [
     { id: 20, state: 'running', src: 'drive', done: 1, total: 10, attempts: 0, speed: 0, name: '网盘文件.mkv', dir: '/data/homebrew/Quarkdownload', exists: null },
     { id: 21, state: 'queued', src: 'link', done: 0, total: 10, attempts: 0, speed: 0, name: '直链文件.bin', dir: '/data/homebrew/Quarkdownload', exists: null },
@@ -568,8 +593,11 @@ const driveText = allText(nodeFor('tasks'));
 const linkText = allText(nodeFor('tasks2'));
 check('网盘页只列网盘任务', /网盘文件/.test(driveText) && !/直链文件/.test(driveText), driveText);
 check('直链页只列直链任务', /直链文件/.test(linkText) && !/网盘文件/.test(linkText), linkText);
-check('直链页写明并发是两页共用', /并发上限 3 个/.test(nodeFor('q2Info').textContent),
+check('直链页写的是本页自己的并发上限', /并发上限 3 个（本页单独设置）/.test(nodeFor('q2Info').textContent),
       nodeFor('q2Info').textContent);
+check('两个选择器各显示各的上限',
+      nodeFor('limitSel').value === '4' && nodeFor('limitSel2').value === '3',
+      nodeFor('limitSel').value + '/' + nodeFor('limitSel2').value);
 check('直链页数出本页有几个任务/几个在跑',
       /本页 1 个任务，0 个下载中/.test(nodeFor('q2Info').textContent),
       nodeFor('q2Info').textContent);

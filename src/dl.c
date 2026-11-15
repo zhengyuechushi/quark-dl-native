@@ -63,10 +63,18 @@ typedef struct {
 
 static dl_task g_task[DL_MAX];
 static int g_count;
-static int g_running;
-static int g_limit = DL_DEFAULT_LIMIT;
+/* Two independent sets of download slots, indexed by task_src() - 1: [0] is a
+ * file picked from the drive, [1] a pasted link. They are separate budgets on
+ * purpose - see dl_limit() in dl.h. */
+static int g_running[2];
+static int g_limit[2] = {DL_DEFAULT_LIMIT, DL_DEFAULT_LIMIT};
 static int g_next_id = 1;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Guards settings.txt only. save_settings is called from dl_set_default_dir and
+ * dl_set_limit while they hold g_lock, so it cannot reuse g_lock without
+ * deadlocking. Two locks, always taken in this order (queue first, then file),
+ * is what keeps a settings write out of a download's way. */
+static pthread_mutex_t g_cfg_lock = PTHREAD_MUTEX_INITIALIZER;
 static char g_data[300] = "/data/quark-dl";
 static char g_dir[300] = DL_DEFAULT_DIR;
 
@@ -78,6 +86,7 @@ static char g_hdr[QUARK_COOKIE_MAX + 96];
 
 static void pump_locked(void);
 static void save_locked(void);
+static int task_src(const dl_task *t);
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -422,6 +431,19 @@ save_locked(void) {
   }
 }
 
+/* Clamps and stores a limit without pumping or saving: load_settings runs
+ * before the queue is usable, and there is nothing to start yet. */
+static void
+set_limit_value(int slot, int n) {
+  if(n < 1) {
+    n = 1;
+  }
+  if(n > 8) {
+    n = 8;
+  }
+  g_limit[slot] = n;
+}
+
 static void
 load_settings(void) {
   char path[400];
@@ -446,6 +468,10 @@ load_settings(void) {
         v = DL_DEFAULT_DIR;
       }
       snprintf(g_dir, sizeof(g_dir), "%s", v);
+    } else if(!strncmp(line, "limit_drive=", 12)) {
+      set_limit_value(0, atoi(line + 12));
+    } else if(!strncmp(line, "limit_link=", 11)) {
+      set_limit_value(1, atoi(line + 11));
     }
   }
   fclose(f);
@@ -454,15 +480,28 @@ load_settings(void) {
 static void
 save_settings(void) {
   char path[400];
+  char tmp[420];
   FILE *f;
 
+  /* Nothing here takes g_lock: dl_set_default_dir and dl_set_limit both call
+   * this while already holding it, so re-acquiring would deadlock. g_limit and
+   * g_dir are read as they are - each is a single int or a 300-byte string
+   * written under g_lock, and a snapshot taken a moment late is still a setting
+   * the user chose. */
+  pthread_mutex_lock(&g_cfg_lock);
   snprintf(path, sizeof(path), "%s/settings.txt", g_data);
-  f = fopen(path, "w");
+  snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+  f = fopen(tmp, "w");
   if(!f) {
+    pthread_mutex_unlock(&g_cfg_lock);
     return;
   }
-  fprintf(f, "dir=%s\n", g_dir);
-  fclose(f);
+  fprintf(f, "dir=%s\nlimit_drive=%d\nlimit_link=%d\n", g_dir, g_limit[0],
+          g_limit[1]);
+  if(fclose(f) == 0) {
+    rename(tmp, path);
+  }
+  pthread_mutex_unlock(&g_cfg_lock);
 }
 
 static void
@@ -1323,8 +1362,15 @@ dl_worker(void *arg) {
       snprintf(t->err, sizeof(t->err), "失败（%d 次尝试）", t->attempts);
     }
   }
-  if(g_running > 0) {
-    g_running--;
+  {
+    /* Free the slot in this task's own budget: a link finishing must not look
+     * like a drive slot came free, or the next drive file would start on top of
+     * a download that is still running. */
+    int slot = task_src(t) - 1;
+
+    if(slot >= 0 && slot < 2 && g_running[slot] > 0) {
+      g_running[slot]--;
+    }
   }
   pump_locked();
   save_locked();
@@ -1336,8 +1382,9 @@ static void
 pump_locked(void) {
   int i;
 
-  for(i = 0; i < g_count && g_running < g_limit; i++) {
+  for(i = 0; i < g_count; i++) {
     dl_task *t = &g_task[i];
+    int slot;
     pthread_attr_t attr;
     const pthread_attr_t *use = NULL;
     pthread_t th;
@@ -1345,6 +1392,17 @@ pump_locked(void) {
     int started;
 
     if(!t->id || t->state != DL_QUEUED) {
+      continue;
+    }
+    slot = task_src(t) - 1;
+    if(slot < 0 || slot > 1) {
+      continue;
+    }
+    /* Each source has its own budget, checked per candidate rather than by the
+     * loop condition: a drive file must be skipped while the drive slots are
+     * full even when the link budget has room, and vice versa. That is what the
+     * two counters are for. */
+    if(g_running[slot] >= g_limit[slot]) {
       continue;
     }
     t->cancel = 0;
@@ -1370,7 +1428,7 @@ pump_locked(void) {
       continue;
     }
     pthread_detach(th);
-    g_running++;
+    g_running[slot]++;
   }
 }
 
@@ -1762,44 +1820,55 @@ dl_clear_finished(int src) {
 }
 
 int
-dl_running(void) {
+dl_running(int src) {
   int n;
 
   pthread_mutex_lock(&g_lock);
-  n = g_running;
+  if(src == DL_SRC_DRIVE || src == DL_SRC_LINK) {
+    n = g_running[src - 1];
+  } else {
+    n = g_running[0] + g_running[1];
+  }
   pthread_mutex_unlock(&g_lock);
   return n;
 }
 
 int
-dl_limit(void) {
+dl_limit(int src) {
   int n;
+  int slot = (src == DL_SRC_LINK) ? 1 : 0;
 
   pthread_mutex_lock(&g_lock);
-  n = g_limit;
+  n = g_limit[slot];
   pthread_mutex_unlock(&g_lock);
   return n;
 }
 
 int
-dl_set_limit(int n) {
-  int changed;
+dl_set_limit(int src, int n) {
+  int slot = (src == DL_SRC_LINK) ? 1 : 0;
+  int before;
+  int changed = 0;
 
-  if(n < 1) {
-    n = 1;
-  }
-  if(n > 8) {
-    n = 8;
-  }
   pthread_mutex_lock(&g_lock);
-  changed = (n != g_limit);
-  g_limit = n;
-  if(changed && g_limit > g_running) {
-    /* More slots just opened; start whatever is waiting. */
+  before = g_limit[slot];
+  set_limit_value(slot, n);
+  if(g_limit[slot] != before) {
+    changed = 1;
+  }
+  if(changed && g_limit[slot] > g_running[slot]) {
+    /* More slots just opened in this budget; start whatever is waiting in it. */
     pump_locked();
   }
+  if(changed) {
+    /* Saved under the lock on purpose: the file is a few dozen bytes, and a
+     * copy of g_dir taken outside it could catch a directory change halfway
+     * through. */
+    save_settings();
+  }
+  n = g_limit[slot];
   pthread_mutex_unlock(&g_lock);
-  return g_limit;
+  return n;
 }
 
 int
@@ -1839,8 +1908,10 @@ dl_json(char *out, size_t cap) {
 
   if(app(out, cap, &used, "{\"dir\":") < 0 ||
      jstr(out, cap, &used, g_dir) < 0 ||
-     app(out, cap, &used, ",\"limit\":%d,\"running\":%d,\"tasks\":[", g_limit,
-         g_running) < 0) {
+     app(out, cap, &used,
+         ",\"limit_drive\":%d,\"limit_link\":%d,"
+         "\"running_drive\":%d,\"running_link\":%d,\"tasks\":[",
+         g_limit[0], g_limit[1], g_running[0], g_running[1]) < 0) {
     return -1;
   }
   pthread_mutex_lock(&g_lock);
@@ -1927,7 +1998,7 @@ dl_shutdown(void) {
   pthread_mutex_unlock(&g_lock);
   /* Workers notice the flag between reads and leave within a read timeout. */
   for(i = 0; i < 20; i++) {
-    if(!dl_running()) {
+    if(!dl_running(DL_SRC_ALL)) {
       break;
     }
     usleep(100 * 1000);

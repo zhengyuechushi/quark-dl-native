@@ -261,7 +261,7 @@ api_diag_json(struct MHD_Connection *conn) {
            host, d.requests, last,
            g_exiting ? "true" : "false",
            tls, net_resolver(),
-           dl_running(), dl_count(), qdir);
+           dl_running(DL_SRC_ALL), dl_count(), qdir);
   return send_json(conn, MHD_HTTP_OK, body);
 }
 
@@ -296,7 +296,7 @@ api_diag_text(struct MHD_Connection *conn) {
            d.requests, d.last[0] ? d.last : "-",
            g_exiting ? "yes" : "no",
            net_status(), net_resolver(),
-           dl_running(), dl_count(), dl_default_dir());
+           dl_running(DL_SRC_ALL), dl_count(), dl_default_dir());
   return send_body(conn, MHD_HTTP_OK, API_TEXT, body);
 }
 
@@ -364,7 +364,7 @@ api_diag_html(struct MHD_Connection *conn) {
            d.instances,
            d.requests,
            tls,
-           dl_running(), dl_count(),
+           dl_running(DL_SRC_ALL), dl_count(),
            qdir);
   return send_body(conn, MHD_HTTP_OK, API_HTML, body);
 }
@@ -854,29 +854,46 @@ api_settings(struct MHD_Connection *conn, const char *body, size_t size,
              const char *method) {
   char dir[340];
   char limit[16];
+  char src[16];
   char reply[700];
   char safe[400];
   char err[220];
 
   if(!strcmp(method, MHD_HTTP_METHOD_POST)) {
-    /* `dir` is required; `limit` (concurrent downloads) is optional. */
-    if(!form_field(body, size, "dir", dir, sizeof(dir)) || !dir[0]) {
-      return send_json(conn, MHD_HTTP_BAD_REQUEST,
-                       "{\"ok\":false,\"error\":\"缺少 dir 字段\"}");
-    }
-    if(dl_set_default_dir(dir, err, sizeof(err))) {
-      json_escape(safe, sizeof(safe), err);
-      snprintf(reply, sizeof(reply), "{\"ok\":false,\"error\":\"%s\"}", safe);
-      return send_json(conn, MHD_HTTP_BAD_REQUEST, reply);
+    /* `dir` and `limit` are each optional, but a request that carries neither
+     * is a client bug - answering ok would hide it. `limit` names its queue
+     * with `src` (drive | link, default drive) because the two pages have a
+     * concurrency setting each. */
+    int touched = 0;
+
+    if(form_field(body, size, "dir", dir, sizeof(dir)) && dir[0]) {
+      if(dl_set_default_dir(dir, err, sizeof(err))) {
+        json_escape(safe, sizeof(safe), err);
+        snprintf(reply, sizeof(reply), "{\"ok\":false,\"error\":\"%s\"}", safe);
+        return send_json(conn, MHD_HTTP_BAD_REQUEST, reply);
+      }
+      touched = 1;
     }
     if(form_field(body, size, "limit", limit, sizeof(limit)) && limit[0]) {
-      dl_set_limit(atoi(limit));
+      int which = DL_SRC_DRIVE;
+
+      if(form_field(body, size, "src", src, sizeof(src)) && !strcmp(src, "link")) {
+        which = DL_SRC_LINK;
+      }
+      dl_set_limit(which, atoi(limit));
+      touched = 1;
+    }
+    if(!touched) {
+      return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                       "{\"ok\":false,\"error\":\"缺少 dir 或 limit 字段\"}");
     }
   }
   json_escape(safe, sizeof(safe), dl_default_dir());
   snprintf(reply, sizeof(reply),
-           "{\"ok\":true,\"dir\":\"%s\",\"limit\":%d,\"tasks\":%d,\"running\":%d}",
-           safe, dl_limit(), dl_count(), dl_running());
+           "{\"ok\":true,\"dir\":\"%s\",\"limit_drive\":%d,\"limit_link\":%d,"
+           "\"tasks\":%d,\"running\":%d}",
+           safe, dl_limit(DL_SRC_DRIVE), dl_limit(DL_SRC_LINK), dl_count(),
+           dl_running(DL_SRC_ALL));
   return send_json(conn, MHD_HTTP_OK, reply);
 }
 

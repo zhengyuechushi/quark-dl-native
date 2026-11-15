@@ -261,6 +261,7 @@
         <div class="toolbar">
           <button id="saveDir" class="small">记住这个目录</button>
           <button id="clear" class="small">清掉已完成</button>
+          <!-- 这里的并发只管网盘任务；直链页有自己的一份，互不占槽位。 -->
           <span class="muted">并发</span>
           <select id="limitSel" class="small">
             <option value="1">1</option>
@@ -274,6 +275,7 @@
         <p class="note">
           默认保存到 <code id="dirDefault">/data/homebrew/Quarkdownload</code>。
           文件先写成 <code>.part</code>，校验落盘后才改名，中断了重新加同一个链接会接着下。
+          这里的并发只算网盘任务，直链页那份单独设。
         </p>
         <div id="tasks"></div>
       </div>
@@ -296,7 +298,18 @@
         <div class="toolbar">
           <button id="saveDir2" class="small">记住这个目录</button>
           <button id="clear2" class="small">清掉已完成</button>
+          <!-- 并发上限按页各设各的：这一页的槽位只归直链任务，网盘那边排队再多也不会
+               把这里的下载拖成「等待中」。 -->
+          <span class="muted">并发</span>
+          <select id="limitSel2" class="small">
+            <option value="1">1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+          </select>
           <span class="muted" id="dirState2"></span>
+          <span class="muted" id="limitState2"></span>
         </div>
         <p class="note">
           默认保存到 <code id="dirDefault2">/data/homebrew/Quarkdownload</code>。
@@ -343,7 +356,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.12.5';
+  var PAGE_V = '0.12.6';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -648,8 +661,9 @@
 
   /* The queue is one list on the server; the two pages show two halves of it.
    * A task picked from the drive carries src "drive", a pasted link "link".
-   * This is presentation only: one concurrency limit, one downloads.txt, one
-   * set of pause/cancel ids - see the note next to the counter below. */
+   * This is presentation only: one downloads.txt, one set of pause/cancel ids.
+   * The concurrency budget, however, is per source - each page owns its own
+   * selector and only that selector's number applies to its own tasks. */
   function renderQueue(host, tasks, emptyText) {
     host.innerHTML = '';
     if (!tasks.length) {
@@ -687,9 +701,15 @@
     json('GET', '/api/dl/list', null, function (err, data) {
       queueBusy = false;
       if (err) { return; }
-      /* Reflect the server's concurrent-download limit in the selector. */
-      if (data.limit && el('limitSel').value !== String(data.limit)) {
-        el('limitSel').value = String(data.limit);
+      /* Each page reflects its own budget in its own selector: changing the
+       * link limit must not silently move the drive number. */
+      var limDrive = data.limit_drive || 0;
+      var limLink = data.limit_link || 0;
+      if (limDrive && el('limitSel').value !== String(limDrive)) {
+        el('limitSel').value = String(limDrive);
+      }
+      if (limLink && el('limitSel2').value !== String(limLink)) {
+        el('limitSel2').value = String(limLink);
       }
       var all = data.tasks || [];
       var drive = [], link = [], running = 0;
@@ -703,10 +723,10 @@
       }
       renderQueue(el('tasks'), drive, '还没有网盘任务。');
       renderQueue(el('tasks2'), link, '还没有直链任务。');
-      /* 并发是全局的，所以直链页出现「等待中」而本页 0 个下载中时，通常是网盘那边
-       * 占着槽位。把这几个数字摆在列表上方，省得看起来像卡死了。 */
-      text('q2Info', '本页 ' + link.length + ' 个任务，' + running + ' 个下载中 · 并发上限 ' +
-        (data.limit || 0) + ' 个（两个页面共用）');
+      /* 这一页的并发是独立的一份，所以「等待中」只可能是本页的槽位占满了，
+       * 不会出现「别的页面在跑，这里干等」那种看起来像卡死的情况。 */
+      text('q2Info', '本页 ' + link.length + ' 个任务，' + running + ' 个下载中，并发上限 ' +
+        limLink + ' 个（本页单独设置）');
     });
   }
 
@@ -782,15 +802,19 @@
   el('saveDir').onclick = function () { rememberDir('saveDir', 'dir', 'addState'); };
   el('saveDir2').onclick = function () { rememberDir('saveDir2', 'dir2', 'dirState2'); };
 
-  el('limitSel').onchange = function () {
-    var n = parseInt(el('limitSel').value, 10) || 2;
-    json('POST', '/api/settings', 'dir=' + encodeURIComponent(el('dir').value.trim()) +
-      '&limit=' + n, function (err, d) {
-      if (err) { text('addState', '并发没保存：' + err.message); return; }
-      text('addState', '并发数已设为 ' + d.limit);
+  /* 并发上限按来源各设各的：src 指明改的是哪一页那份预算。这里不再连带提交目录，
+   * 改一个数字不该顺手把目录也保存一遍。 */
+  function setLimit(selId, src, msgId) {
+    var n = parseInt(el(selId).value, 10) || 2;
+    json('POST', '/api/settings', 'src=' + src + '&limit=' + n, function (err, d) {
+      if (err) { text(msgId, '并发没保存：' + err.message); return; }
+      text(msgId, '并发数已设为 ' + (src === 'link' ? d.limit_link : d.limit_drive));
       pollQueue();
     });
-  };
+  }
+
+  el('limitSel').onchange = function () { setLimit('limitSel', 'drive', 'addState'); };
+  el('limitSel2').onchange = function () { setLimit('limitSel2', 'link', 'limitState2'); };
 
   /* 两个页面各清各的那一半：按钮就长在各自的列表旁边，顺手把另一页的任务也删掉
    * 会让人以为点错了。 */

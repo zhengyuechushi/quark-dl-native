@@ -5,8 +5,8 @@
 /* The download queue.
  *
  * One task is one URL to one file. Tasks run in their own detached threads, at
- * most DL_LIMIT at a time, because a console downloading six files at once is
- * slower than three and much harder to explain when it fails.
+ * most DL_DEFAULT_LIMIT at a time per source, because a console downloading six
+ * files at once is slower than three and much harder to explain when it fails.
  *
  * Resuming is the whole point of the file layout: bytes go to "<name>.part"
  * and the file is renamed only after fsync succeeds, so an interrupted download
@@ -29,9 +29,9 @@
 #define DL_PAUSED 6
 
 #define DL_MAX 64
-/* Default number of simultaneous downloads. Tunable at runtime via
+/* Default number of simultaneous downloads, per source. Tunable at runtime via
  * dl_set_limit / the settings endpoint; 3 at once was more than a console
- * wants, so the default is 2 and the user can pick. */
+ * wants, so the default is 2 and the user can pick for each page. */
 #define DL_DEFAULT_LIMIT 2
 
 /* Multi-connection segmented download. A Quark CDN throttles a single
@@ -102,23 +102,27 @@ int dl_resume(int id);
  * Returns the number of tasks touched. */
 int dl_cancel(int id);
 
-/* Concurrent download limit. dl_set_limit clamps to [1, 8]. */
-int dl_limit(void);
-int dl_set_limit(int n);
-
 /* Which half of the queue a task belongs to: a file picked from the drive is
- * queued by fid, a pasted link has no fid. Both live in the same queue - one
- * concurrency limit, one downloads.txt - so the two pages filter this field
- * instead of the engine keeping two queues. */
+ * queued by fid, a pasted link has no fid. Both live in the same queue and the
+ * same downloads.txt, so the two pages filter this field instead of the engine
+ * keeping two sets of tasks. */
 #define DL_SRC_ALL   0
 #define DL_SRC_DRIVE 1
 #define DL_SRC_LINK  2
+
+/* Concurrent download limit, one budget per source. Two counters rather than
+ * one shared: a 40-file drive batch used to fill every slot, so a link the user
+ * pasted and wanted immediately sat at zero behind files they had queued for
+ * later. dl_set_limit clamps to [1, 8] and persists the choice. */
+int dl_limit(int src);
+int dl_set_limit(int src, int n);
 
 /* Removes finished tasks from the list, restricted to `src` (DL_SRC_ALL drops
  * every source). Returns how many were dropped. */
 int dl_clear_finished(int src);
 
-int dl_running(void);
+/* How many are downloading right now. DL_SRC_ALL counts both sources. */
+int dl_running(int src);
 int dl_count(void);
 
 /* JSON snapshot. Returns 0, or -1 when the buffer is too small. */

@@ -196,7 +196,7 @@ jobs:
           grep -q "unlink(part)" src/dl.c
           grep -q '"/api/dl/pause"' src/api.c
           grep -q '"/api/dl/resume"' src/api.c
-          grep -q "int dl_set_limit(int n)" src/dl.h
+          grep -q "int dl_set_limit(int src, int n)" src/dl.h
           echo ok
 
       # A small body reader forces one read() + write() system call per fill,
@@ -356,6 +356,9 @@ jobs:
       # One queue in the engine, two lists on screen. The list has to say which
       # half a task belongs to and clearing has to be able to name one half,
       # otherwise the two pages would show (and wipe) each other's tasks.
+      # The task list is shared, but the download slots are not: a drive batch
+      # must never park a pasted link. Two counters, each guarded on its own,
+      # and a selector per page that names the half it is changing.
       - name: Queue is one list, two views
         run: |
           set -e
@@ -363,6 +366,7 @@ jobs:
           import io
           dl = io.open('src/dl.c', encoding='utf-8').read()
           api = io.open('src/api.c', encoding='utf-8').read()
+          hdr = io.open('src/dl.h', encoding='utf-8').read()
           htm = io.open('assets/index.html', encoding='utf-8').read()
           assert 'task_src(t) == DL_SRC_DRIVE ? "drive" : "link"' in dl, 'list does not report src'
           assert 'dl_clear_finished(which)' in api, 'clear is not restricted to one half'
@@ -370,6 +374,13 @@ jobs:
           assert "el('tasks2')" in htm, 'direct-link page has no queue container'
           assert "all[i].src === 'link'" in htm, 'page does not split by src'
           assert "?src=' + src" in htm, 'clear button does not name its half'
+          assert 'static int g_limit[2]' in dl, 'concurrency is one shared budget again'
+          assert 'if(g_running[slot] >= g_limit[slot])' in dl, 'pump ignores the per-source budget'
+          assert 'static int g_running[2]' in dl, 'running count is global again'
+          assert 'int dl_set_limit(int src, int n)' in hdr, 'set_limit lost its source argument'
+          assert 'int dl_limit(int src)' in hdr, 'limit lost its source argument'
+          assert 'id="limitSel2"' in htm, 'direct-link page has no concurrency selector'
+          assert "src=' + src + '&limit=" in htm, 'selector does not name its half'
           print('ok')
           PY
 
@@ -392,6 +403,31 @@ jobs:
           grep -q '"ok":true' health.json
           grep -q '"build":"smoke"' health.json
           grep -q '"port":8520' health.json
+
+          # Two concurrency budgets, not one. Each page's selector changes only
+          # its own half and the choice is written to settings.txt, so a restart
+          # does not silently drop it back to the default. A shared counter is
+          # exactly what made a pasted link sit at 0% behind a drive batch.
+          echo "--- concurrency budget is per source ---"
+          curl -fsS -X POST --data 'src=link&limit=4' "$base/api/settings" | tee set-link.json
+          echo
+          grep -q '"limit_link":4' set-link.json
+          grep -q '"limit_drive":2' set-link.json
+
+          curl -fsS -X POST --data 'src=drive&limit=3' "$base/api/settings" > set-drive.json
+          cat set-drive.json
+          echo
+          curl -fsS "$base/api/dl/list" | tee dl-list.json
+          echo
+          grep -q '"limit_drive":3' dl-list.json
+          grep -q '"limit_link":4' dl-list.json
+          grep -q '^limit_drive=3$' .smoke-data/settings.txt
+          grep -q '^limit_link=4$' .smoke-data/settings.txt
+
+          echo "--- a settings post that changes nothing is refused ---"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST --data 'x=1' "$base/api/settings")
+          echo "status $code"
+          test "$code" = 400
 
           echo "--- diag as json (what scripts get) ---"
           curl -fsS "$base/api/diag?format=json" | tee diag.json
