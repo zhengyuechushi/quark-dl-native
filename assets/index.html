@@ -285,11 +285,18 @@
         <h2>直链下载</h2>
         <label class="field">链接（一行一个，支持多选粘贴）</label>
         <textarea id="urls" placeholder="https://…&#10;https://…" spellcheck="false"></textarea>
-        <label class="field">保存到（绝对路径）</label>
-        <input id="dir2" spellcheck="false" placeholder="/data/homebrew/Quarkdownload">
+        <!-- 按钮紧跟在粘贴框下面：粘完就该能直接点，不用先扫过「保存到」。 -->
         <div class="toolbar">
           <button id="add">加入下载队列</button>
           <span class="muted" id="addState2"></span>
+        </div>
+        <label class="field">保存到（绝对路径）</label>
+        <input id="dir2" spellcheck="false" placeholder="/data/homebrew/Quarkdownload">
+        <!-- 这一页自己也能存目录、清列表，不用切回「下载位置与队列」。 -->
+        <div class="toolbar">
+          <button id="saveDir2" class="small">记住这个目录</button>
+          <button id="clear2" class="small">清掉已完成</button>
+          <span class="muted" id="dirState2"></span>
         </div>
         <p class="note">
           默认保存到 <code id="dirDefault2">/data/homebrew/Quarkdownload</code>。
@@ -333,7 +340,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.12.3';
+  var PAGE_V = '0.12.4';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -726,15 +733,30 @@
     });
   };
 
-  el('saveDir').onclick = function () {
-    var btn = el('saveDir');
+  /* 「记住这个目录」「清掉已完成」两个字面在页面上各出现两次（「下载位置与队列」
+   * 和「直链下载」各一套），所以动作写成函数、只把按钮和回显位置作为参数传进来。
+   * 两处的 dir/dir2 本来就互相同步，读哪个都对。 */
+  function rememberDir(btnId, inputId, msgId) {
+    var btn = el(btnId);
     btn.disabled = true;
-    json('POST', '/api/settings', 'dir=' + encodeURIComponent(el('dir').value.trim()), function (err, d) {
+    json('POST', '/api/settings', 'dir=' + encodeURIComponent(el(inputId).value.trim()), function (err, d) {
       btn.disabled = false;
-      if (err) { text('addState', '目录没保存：' + err.message); return; }
-      text('addState', '默认目录已保存：' + d.dir);
+      if (err) { text(msgId, '目录没保存：' + err.message); return; }
+      text(msgId, '默认目录已保存：' + d.dir);
     });
-  };
+  }
+
+  function clearDone(msgId) {
+    json('POST', '/api/dl/clear', '', function (err) {
+      if (msgId) {
+        text(msgId, err ? '清空失败：' + err.message : '已清掉已完成的任务');
+      }
+      pollQueue();
+    });
+  }
+
+  el('saveDir').onclick = function () { rememberDir('saveDir', 'dir', 'addState'); };
+  el('saveDir2').onclick = function () { rememberDir('saveDir2', 'dir2', 'dirState2'); };
 
   el('limitSel').onchange = function () {
     var n = parseInt(el('limitSel').value, 10) || 2;
@@ -746,9 +768,8 @@
     });
   };
 
-  el('clear').onclick = function () {
-    json('POST', '/api/dl/clear', '', function () { pollQueue(); });
-  };
+  el('clear').onclick = function () { clearDone(''); };
+  el('clear2').onclick = function () { clearDone('dirState2'); };
 
   el('exit').onclick = function () {
     var btn = el('exit');

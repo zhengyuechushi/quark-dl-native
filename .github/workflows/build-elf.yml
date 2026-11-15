@@ -332,6 +332,27 @@ jobs:
       - name: Page behaviour
         run: node tools/test-page.mjs
 
+      # The stub DOM in test-page.mjs is built from ids, so it cannot see where an
+      # element sits. Reading order matters here: the queue button has to sit
+      # between the paste box and 保存到 (paste, then press), and the two directory
+      # buttons have to come after the directory input they act on.
+      - name: Direct-link pane layout
+        run: |
+          set -e
+          python3 - <<'PY'
+          import io
+          s = io.open('assets/index.html', encoding='utf-8').read()
+          pane = s[s.index('id="pane-dl"'):]
+          i_urls = pane.index('id="urls"')
+          i_add = pane.index('id="add"')
+          i_dir = pane.index('id="dir2"')
+          i_save = pane.index('id="saveDir2"')
+          i_clear = pane.index('id="clear2"')
+          assert i_urls < i_add < i_dir, '加入下载队列 必须在粘贴框和 保存到 之间'
+          assert i_dir < i_save and i_dir < i_clear, '记住这个目录/清掉已完成 必须在目录框之后'
+          print('ok')
+          PY
+
       - name: Endpoints and clean exit
         run: |
           set -e

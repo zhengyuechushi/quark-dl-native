@@ -512,6 +512,32 @@ if (limitSel.onchange) limitSel.onchange();
 const setReq = requests.find((r) => r.url.split('?')[0] === '/api/settings' && /limit=3/.test(r.body));
 check('改并发发 limit=3 到 /api/settings', !!setReq, setReq && setReq.body);
 
+console.log('\n直链下载页');
+/* 0.12.4: this pane is now usable on its own - the queue button sits under the
+ * paste box, and the directory line carries 记住这个目录 / 清掉已完成 just like
+ * the queue pane, instead of making the user switch tabs for them. */
+nodeFor('dir2').value = '/data/homebrew/Quarkdownload';
+requests.length = 0;
+nodeFor('saveDir2').onclick();
+/* Found before drain(): drain() shifts the queue, so a request is only
+ * inspectable while it is still pending. */
+const save2Req = requests.find((r) => r.url.split('?')[0] === '/api/settings');
+drain();
+check('直链页的「记住这个目录」发到 /api/settings',
+      !!save2Req && /dir=%2Fdata%2Fhomebrew%2FQuarkdownload(&|$)/.test(save2Req.body),
+      save2Req && save2Req.body);
+check('保存成功后在原处告诉用户存到哪',
+      /默认目录已保存/.test(nodeFor('dirState2').textContent),
+      nodeFor('dirState2').textContent);
+
+requests.length = 0;
+nodeFor('clear2').onclick();
+const clear2Req = requests.find((r) => r.url.split('?')[0] === '/api/dl/clear');
+drain();
+check('直链页的「清掉已完成」发到 /api/dl/clear', !!clear2Req);
+check('清空后在原处回显', /已清掉已完成的任务/.test(nodeFor('dirState2').textContent),
+      nodeFor('dirState2').textContent);
+
 console.log('');
 if (failures) {
   console.log(`${failures} 项失败`);
