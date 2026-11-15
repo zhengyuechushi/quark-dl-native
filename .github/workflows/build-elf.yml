@@ -308,6 +308,22 @@ jobs:
           grep -q '/data/homebrew/Quarkdownload' assets/index.html
           echo ok
 
+      # "目录不可写" was reported for a folder that was downloading files at that
+      # very moment: access(W_OK) says EACCES on this console's /data mount where
+      # open(O_CREAT) succeeds. The check has to be the write itself, and the
+      # folders/files we create have to be 0777 like the rest of /data/homebrew
+      # (mkdir/open both get masked by the umask).
+      - name: Download directory is checked by writing into it
+        run: |
+          set -e
+          ! grep -q 'access(dir, W_OK)' src/dl.c
+          grep -q 'dir_writable(dir, &why)' src/dl.c
+          grep -q 'O_WRONLY | O_CREAT | O_EXCL' src/dl.c
+          grep -q 'chmod(dir, 0777)' src/dl.c
+          grep -q 'fchmod(fd, 0777)' src/dl.c
+          grep -q 'mkdir(tmp, 0777)' src/dl.c
+          echo ok
+
       # The page ships inside the ELF, so what it does is invisible until it is
       # on a console - and "I picked a file, pressed the button, nothing
       # happened" is exactly the report that blind spot produces. This runs the

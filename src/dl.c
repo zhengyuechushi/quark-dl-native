@@ -145,18 +145,26 @@ mkdirs(const char *path) {
     return -1;
   }
   memcpy(tmp, path, n + 1);
-  for(i = 1; i < n; i++) {
-    if(tmp[i] != '/') {
+  for(i = 1; i <= n; i++) {
+    char sep;
+
+    if(i < n && tmp[i] != '/') {
       continue;
     }
+    sep = tmp[i];
     tmp[i] = 0;
-    if(mkdir(tmp, 0755) != 0 && errno != EEXIST) {
+    if(mkdir(tmp, 0777) == 0) {
+      /* mkdir's mode is filtered through the umask, and a 0755 directory is
+       * exactly what makes an FTP client (or any other tool on the console)
+       * unable to write into the folder we just created for it. Every other
+       * entry under /data/homebrew is 0777, so match that instead of relying
+       * on the umask. */
+      chmod(tmp, 0777);
+    } else if(errno != EEXIST) {
+      tmp[i] = sep;
       return -1;
     }
-    tmp[i] = '/';
-  }
-  if(mkdir(tmp, 0755) != 0 && errno != EEXIST) {
-    return -1;
+    tmp[i] = sep;
   }
   return 0;
 }
@@ -177,6 +185,44 @@ path_join(char *out, size_t cap, const char *dir, const char *name,
   int n = snprintf(out, cap, "%s/%s%s", dir, name, suffix ? suffix : "");
 
   return (n < 0 || (size_t)n >= cap) ? -1 : 0;
+}
+
+/* Can a download actually be written into this directory?
+ *
+ * Not `access(dir, W_OK)`. On this console's /data mount that call answers
+ * EACCES for directories that open(O_CREAT) writes into perfectly well - the
+ * user sees "目录不可写" on a folder they are downloading into at the same
+ * moment. The only honest test is the thing a download does anyway: create a
+ * file, then remove it. `why` receives the errno that stopped us, so the
+ * message names the real reason (read-only mount, no permission) instead of
+ * blaming the path. */
+static int
+dir_writable(const char *dir, int *why) {
+  static const char *const names[] = {".qdl-wtest", ".qdl-wtest-2"};
+  char path[1024];
+  size_t i;
+
+  for(i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+    int fd;
+
+    if(path_join(path, sizeof(path), dir, names[i], "") != 0) {
+      *why = ENAMETOOLONG;
+      return -1;
+    }
+    fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if(fd >= 0) {
+      close(fd);
+      unlink(path);
+      return 0;
+    }
+    if(errno != EEXIST) {
+      *why = errno;
+      return -1;
+    }
+  }
+  /* Both probe names were taken: this directory is not ours to write in. */
+  *why = EACCES;
+  return -1;
 }
 
 /* A link is not a public file: the CDN behind it repeats the anti-hotlink
@@ -1011,11 +1057,16 @@ dl_attempt(dl_task *t) {
     return -3;
   }
 
-  fd = open(part, O_RDWR | O_CREAT, 0644);
+  fd = open(part, O_RDWR | O_CREAT, 0777);
   if(fd < 0) {
     snprintf(t->err, sizeof(t->err), "无法写入 %s: %s", part, strerror(errno));
     return -3;
   }
+  /* open()'s mode is masked by the umask same as mkdir's, and a resumed file
+   * keeps whatever mode it was created with. Set it explicitly so a download
+   * ends up with the same permissions as everything else under /data/homebrew
+   * - which is also what lets a tool on the console replace or rename it. */
+  (void)fchmod(fd, 0777);
 
   /* A fid-queued file mints its direct link here, at the moment it actually
    * starts, instead of at add time. That is what keeps a file that waited in
@@ -1346,7 +1397,13 @@ dl_init(const char *data_dir) {
    * the migration on every boot. */
   save_settings();
   load_queue();
-  mkdirs(g_dir);
+  if(mkdirs(g_dir) == 0 && !strcmp(g_dir, DL_DEFAULT_DIR)) {
+    /* Our own folder, and one an earlier version created 0755 (mkdir minus the
+     * umask). Fix it on boot so an upgrade does not leave the download folder
+     * the only thing under /data/homebrew that other tools cannot write into.
+     * Only the default path is touched: a directory the user typed is theirs. */
+    chmod(g_dir, 0777);
+  }
 
   pthread_mutex_lock(&g_lock);
   pump_locked();
@@ -1361,6 +1418,8 @@ dl_default_dir(void) {
 
 int
 dl_set_default_dir(const char *dir, char *err, size_t cap) {
+  int why = 0;
+
   if(!dir || dir[0] != '/') {
     snprintf(err, cap, "目录必须是绝对路径");
     return -1;
@@ -1369,10 +1428,16 @@ dl_set_default_dir(const char *dir, char *err, size_t cap) {
     snprintf(err, cap, "无法创建目录 %s: %s", dir, strerror(errno));
     return -1;
   }
-  if(access(dir, W_OK) != 0) {
-    snprintf(err, cap, "目录不可写 %s: %s", dir, strerror(errno));
+  if(dir_writable(dir, &why)) {
+    snprintf(err, cap, "目录不可写 %s: %s", dir, strerror(why));
     return -1;
   }
+  /* The folder is the download target from now on, so make it as usable as the
+   * rest of /data/homebrew: a 0755 directory left over from an earlier version
+   * (or made by mkdir under the umask) blocks an FTP client from writing into
+   * it. Best effort - a mount that has no permissions to change answers
+   * EPERM and the download still works. */
+  chmod(dir, 0777);
   pthread_mutex_lock(&g_lock);
   snprintf(g_dir, sizeof(g_dir), "%s", dir);
   save_settings();

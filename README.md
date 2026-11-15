@@ -157,6 +157,11 @@ bash ps5/build.sh     # 只出 quark-dl_v<版本>.elf
 默认目录 `/data/homebrew/Quarkdownload`：单独一个子目录，不和安装的 payload 混在一起
 （0.12.2 从 `/data/homebrew` 改过来；旧设置里的老默认值会自动迁移）。
 
+「能不能写」用**建一个探针文件**来判断，不用 `access(W_OK)`——后者在这台主机的 `/data`
+挂载点上会对能写的目录返回 `EACCES`，于是出现过「正在下载却提示目录不可写」。新建的目录和
+文件都显式 `chmod 0777`（`mkdir`/`open` 的权限位会被 umask 削成 0755/0644），
+和 `/data/homebrew` 下其它内容保持一致，FTP 客户端也能直接写入。
+
 ## 构建
 
 ```sh
