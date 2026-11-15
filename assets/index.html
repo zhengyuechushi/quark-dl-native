@@ -168,7 +168,7 @@
         <div class="row"><span class="k">进程名（进程列表显示）</span><span class="v" id="name">—</span></div>
         <div class="row"><span class="k">PID / 父进程</span><span class="v" id="pid">—</span></div>
         <div class="row"><span class="k">端口</span><span class="v" id="port">—</span></div>
-        <div class="row"><span class="k">你连的地址</span><span class="v" id="host">—</span></div>
+        <div class="row"><span class="k">地址</span><span class="v" id="host">—</span></div>
         <div class="row"><span class="k">已运行</span><span class="v" id="uptime">—</span></div>
         <div class="row"><span class="k">构建</span><span class="v" id="build">—</span></div>
         <div class="row"><span class="k">TLS</span><span class="v" id="tls">—</span></div>
@@ -176,10 +176,6 @@
 
       <div class="card">
         <h2>网络自检</h2>
-        <p class="note" style="margin-top:0">
-          这台主机能不能真的上网，取决于四件互相独立的事：域名解析、TCP、TLS 握手、证书校验。
-          点一次就知道断在哪一步。默认测的是 pan.quark.cn，也就是后面要拿网盘目录的那个域名。
-        </p>
         <label class="field">测试地址</label>
         <input id="probeUrl" value="https://pan.quark.cn/" spellcheck="false">
         <div class="toolbar">
@@ -193,8 +189,7 @@
         <h2>结束运行</h2>
         <button id="exit" class="danger">结束运行（可重新加载）</button>
         <p class="note">
-          点了之后进程自己退出，不写任何标记文件，也不影响下次加载。这是主机界面那个「终止」按钮对 payload
-          做不到的事。重启用你原来的方式再加载一次 ELF 即可。
+          点了之后进程自己退出，不写任何标记文件，也不影响下次加载。重启再加载一次 ELF 即可。
         </p>
       </div>
     </section>
@@ -211,7 +206,6 @@
         <div class="toolbar">
           <button id="qQr">扫码登录</button>
           <button id="qLogout" class="small">退出登录</button>
-          <button id="qProbe" class="small">看原始 JSON</button>
           <span class="muted" id="qMsg"></span>
         </div>
         <details class="help">
@@ -256,15 +250,14 @@
              off-screen and the button looked like it did nothing. -->
         <p class="note" id="qAddMsg" style="display:none"></p>
         <p class="note">
-          勾目录会递归整个文件夹（最多 2000 个文件，分 50 个一批换直链）。文件下到上面那个保存目录。
-          这个页面只读网盘，不会移动、改名或删除任何东西。
+          勾目录会递归整个文件夹（最多 2000 个文件）。这个页面只读网盘，不会移动、改名或删除任何东西。
         </p>
       </div>
 
       <div class="card">
         <h2>下载位置与队列</h2>
         <label class="field">保存到（绝对路径）</label>
-        <input id="dir" spellcheck="false" placeholder="/data/homebrew">
+        <input id="dir" spellcheck="false" placeholder="/data/homebrew/Quarkdownload">
         <div class="toolbar">
           <button id="saveDir" class="small">记住这个目录</button>
           <button id="clear" class="small">清掉已完成</button>
@@ -279,7 +272,7 @@
           <span class="muted" id="addState"></span>
         </div>
         <p class="note">
-          默认保存到 <code id="dirDefault">/data/homebrew</code>，和 ProsperoStore 的安装目录一致。
+          默认保存到 <code id="dirDefault">/data/homebrew/Quarkdownload</code>。
           文件先写成 <code>.part</code>，校验落盘后才改名，中断了重新加同一个链接会接着下。
         </p>
         <div id="tasks"></div>
@@ -293,13 +286,13 @@
         <label class="field">链接（一行一个，支持多选粘贴）</label>
         <textarea id="urls" placeholder="https://…&#10;https://…" spellcheck="false"></textarea>
         <label class="field">保存到（绝对路径）</label>
-        <input id="dir2" spellcheck="false" placeholder="/data/homebrew">
+        <input id="dir2" spellcheck="false" placeholder="/data/homebrew/Quarkdownload">
         <div class="toolbar">
           <button id="add">加入下载队列</button>
           <span class="muted" id="addState2"></span>
         </div>
         <p class="note">
-          默认保存到 <code id="dirDefault2">/data/homebrew</code>，和 ProsperoStore 的安装目录一致。
+          默认保存到 <code id="dirDefault2">/data/homebrew/Quarkdownload</code>。
           文件先写成 <code>.part</code>，校验落盘后才改名，中断了重新加同一个链接会接着下。
         </p>
       </div>
@@ -340,7 +333,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.12.1';
+  var PAGE_V = '0.12.2';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -448,7 +441,7 @@
       el('name').appendChild(hint);
     }
 
-    var dflt = (d.dl && d.dl.dir) || '/data/homebrew';
+    var dflt = (d.dl && d.dl.dir) || '/data/homebrew/Quarkdownload';
     text('dirDefault', dflt);
     text('dirDefault2', dflt);
     if (!dirTouched && !el('dir').value) {
@@ -1072,17 +1065,6 @@
     });
   };
 
-  el('qProbe').onclick = function () {
-    var p = window.prompt('要直接请求哪个接口路径？', '/1/clouddrive/member?pr=ucpro&fr=pc');
-    if (!p) return;
-    text('qMsg', '正在请求…');
-    json('GET', '/api/quark/probe?path=' + encodeURIComponent(p), null, function (err, d) {
-      text('qMsg', '');
-      if (err) { qShowRaw('请求失败：' + err.message); return; }
-      qShowRaw(JSON.stringify(d, null, 2));
-    }, 60000);
-  };
-
   el('qAdd').onclick = function () {
     var lines = [], k, n = qCount();
     if (!n) { qaMsg('先在上面勾选文件或目录（每行左边的方框）', 'bad'); return; }
@@ -1098,12 +1080,14 @@
 
     btn.disabled = true;
     addBusy = true;
-    qaMsg('正在换直链并加入队列…（已选 ' + n + ' 项，目录越大越慢，页面别关）');
+    qaMsg('正在加入队列…（已选 ' + n + ' 项，目录越大越慢，页面别关）');
 
     /* A silent spinner looks exactly like a dead button, and a folder of a
-     * thousand files legitimately takes minutes here: each batch of 50 links
-     * is a round trip to Quark. Count the seconds out loud so waiting is
-     * visibly different from nothing happening. */
+     * thousand files legitimately takes minutes here: every directory inside
+     * it is a round trip to Quark just to be listed. Links are no longer minted
+     * at this point (each one is fetched when its download starts), so this
+     * counter measures listing, not signing. Count the seconds out loud so
+     * waiting is visibly different from nothing happening. */
     btn.textContent = '处理中 0 秒';
     var tick = setInterval(function () {
       btn.textContent = '处理中 ' + Math.floor((Date.now() - t0) / 1000) + ' 秒';

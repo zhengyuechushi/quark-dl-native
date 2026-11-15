@@ -46,8 +46,18 @@
 /* Loads the persisted queue and settings, creating the data directory. */
 int dl_init(const char *data_dir);
 
-/* Default destination. Persisted; defaults to /data/homebrew, the location
- * ProsperoStore installs to, so a user finds downloads where they expect. */
+/* Where downloads land when the user has not chosen a directory. Persisted, and
+ * a real subdirectory rather than /data/homebrew itself: that directory holds
+ * the installed payloads, and mixing downloaded films into it makes both lists
+ * unreadable. */
+#define DL_DEFAULT_DIR "/data/homebrew/Quarkdownload"
+
+/* What 0.12.1 and earlier used. A settings file holding exactly this value is
+ * migrated to DL_DEFAULT_DIR once, on load; anything else was picked by the
+ * user and is left alone. */
+#define DL_LEGACY_DIR "/data/homebrew"
+
+/* Default destination. Persisted; defaults to DL_DEFAULT_DIR. */
 const char *dl_default_dir(void);
 int dl_set_default_dir(const char *dir, char *err, size_t cap);
 

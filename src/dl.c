@@ -68,7 +68,7 @@ static int g_limit = DL_DEFAULT_LIMIT;
 static int g_next_id = 1;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static char g_data[300] = "/data/quark-dl";
-static char g_dir[300] = "/data/homebrew";
+static char g_dir[300] = DL_DEFAULT_DIR;
 
 /* "Referer: ...\r\nCookie: ...\r\n" for quark downloads, empty when nobody has
  * logged in. Written by the API thread, read by the download threads, hence the
@@ -382,6 +382,12 @@ load_settings(void) {
     line[strcspn(line, "\r\n")] = 0;
     if(!strncmp(line, "dir=", 4) && line[4] == '/') {
       v = line + 4;
+      /* A settings file from 0.12.1 or earlier carries the old default, which
+       * dumped films straight into the directory that holds the payloads.
+       * Only that exact value is rewritten - a path the user picked is theirs. */
+      if(!strcmp(v, DL_LEGACY_DIR)) {
+        v = DL_DEFAULT_DIR;
+      }
       snprintf(g_dir, sizeof(g_dir), "%s", v);
     }
   }
@@ -1335,6 +1341,10 @@ dl_init(const char *data_dir) {
     snprintf(g_dir, sizeof(g_dir), "%s", override);
   }
   load_settings();
+  /* Write the result back once: that is what turns the legacy /data/homebrew
+   * in an old settings file into the new default for good, instead of repeating
+   * the migration on every boot. */
+  save_settings();
   load_queue();
   mkdirs(g_dir);
 

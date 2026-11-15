@@ -154,7 +154,8 @@ bash ps5/build.sh     # 只出 quark-dl_v<版本>.elf
 - 同时最多 3 个（`DL_LIMIT`），队列落盘到 `/data/quark-dl/downloads.txt`，重启后继续；
 - 剩余空间不足 64 MB 时在开始前就报错。
 
-默认目录 `/data/homebrew`，与 ProsperoStore 的安装位置一致（`src/app/store.hpp:86`）。
+默认目录 `/data/homebrew/Quarkdownload`：单独一个子目录，不和安装的 payload 混在一起
+（0.12.2 从 `/data/homebrew` 改过来；旧设置里的老默认值会自动迁移）。
 
 ## 构建
 

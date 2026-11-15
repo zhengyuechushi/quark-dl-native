@@ -341,7 +341,7 @@ api_diag_html(struct MHD_Connection *conn) {
            "<tr><td class=\"k\">期望的名字</td><td class=\"v\">%s</td></tr>"
            "<tr><td class=\"k\">PID / 父进程</td><td class=\"v\">%d / %d</td></tr>"
            "<tr><td class=\"k\">端口</td><td class=\"v\">%u</td></tr>"
-           "<tr><td class=\"k\">你连的地址（Host）</td><td class=\"v\">%s</td></tr>"
+           "<tr><td class=\"k\">地址（Host）</td><td class=\"v\">%s</td></tr>"
            "<tr><td class=\"k\">构建</td><td class=\"v\">%s</td></tr>"
            "<tr><td class=\"k\">已运行</td><td class=\"v\">%ld 秒</td></tr>"
            "<tr><td class=\"k\">同名实例</td><td class=\"v\">%d</td></tr>"

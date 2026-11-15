@@ -291,6 +291,23 @@ jobs:
           test "$N" -lt "$L" || { echo "notification must precede the launcher"; exit 1; }
           echo ok
 
+      # 0.12.2 把默认下载目录从 /data/homebrew 挪到它下面单独的子目录：
+      # 那个目录装的是 payload 本体，把片子混进去两边都不好读。
+      - name: Default download directory
+        run: |
+          set -e
+          grep -q '#define DL_DEFAULT_DIR "/data/homebrew/Quarkdownload"' src/dl.h
+          grep -q '#define DL_LEGACY_DIR "/data/homebrew"' src/dl.h
+          # 老 settings.txt 里恰好等于旧默认值的要迁移；用户自己填过的目录不动。
+          grep -q 'strcmp(v, DL_LEGACY_DIR)' src/dl.c
+          # 迁移结果要落盘，否则每次启动都得再算一遍。
+          grep -q '^  save_settings();' src/dl.c
+          # 页面上不能再出现旧的默认值（新的那个是它的子目录，所以要比全串）。
+          ! grep -q "placeholder=\"/data/homebrew\"" assets/index.html
+          ! grep -q "'/data/homebrew'" assets/index.html
+          grep -q '/data/homebrew/Quarkdownload' assets/index.html
+          echo ok
+
       # The page ships inside the ELF, so what it does is invisible until it is
       # on a console - and "I picked a file, pressed the button, nothing
       # happened" is exactly the report that blind spot produces. This runs the

@@ -310,9 +310,10 @@ check('items 带上了勾选的文件 id', !!pending && /items=f1%09/.test(pendi
       pending && pending.body);
 check('items 带上了 d/f 标记', !!pending && /%09f(&|$)/.test(pending.body),
       pending && pending.body);
-check('请求里带了保存目录', !!pending && /dir=%2Fdata%2Fhomebrew/.test(pending.body),
+/* 0.12.2: the default is its own subdirectory, not /data/homebrew itself. */
+check('请求里带了保存目录', !!pending && /dir=%2Fdata%2Fhomebrew%2FQuarkdownload(&|$)/.test(pending.body),
       pending && pending.body);
-check('等待时也告诉用户在干什么', /正在换直链/.test(msg.textContent), msg.textContent);
+check('等待时也告诉用户在干什么', /正在加入队列/.test(msg.textContent), msg.textContent);
 
 addAnswer = { ok: true, queued: 1, failed: 0 };
 pending.deliver();
