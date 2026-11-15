@@ -132,8 +132,12 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        if path not in ('/file', '/slow', '/chunked', '/hotlink', '/hotlink-long',
-                        '/hotlink-r'):
+        # /nest/... serves the same bytes at any depth: a stand-in for a CDN
+        # link whose path has directories in it, so the test can prove the saved
+        # name is the last segment and not the whole path.
+        if (path not in ('/file', '/slow', '/chunked', '/hotlink', '/hotlink-long',
+                         '/hotlink-r')
+                and not path.startswith('/nest/')):
             self.send_response(404)
             self.send_header('Content-Length', '0')
             self.send_header('Connection', 'close')

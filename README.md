@@ -77,9 +77,9 @@
 | GET | `/api/diag` | 诊断；浏览器看网页版，脚本拿 JSON（`?format=json`、`.txt`） |
 | GET | `/api/net/selftest?url=` | 网络自检，返回每一步的结果与耗时 |
 | POST | `/api/dl/add` | 表单 `url=`（可多行）`&dir=` `&name=` |
-| GET | `/api/dl/list` | 队列快照（含进度、错误） |
+| GET | `/api/dl/list` | 队列快照（含进度、错误，`src` 标明来自网盘还是直链） |
 | POST | `/api/dl/cancel?id=` | 取消一个（`id=all` 全部） |
-| POST | `/api/dl/clear` | 清掉已结束的任务 |
+| POST | `/api/dl/clear` | 清掉已结束的任务；`?src=drive` / `?src=link` 只清那一半，不带参数清全部 |
 | GET/POST | `/api/settings` | 读取/设置默认保存目录 |
 | GET | `/api/fs/list?path=` | 列目录 |
 | POST | `/api/open-ui` | 让主机浏览器打开控制页（只允许 127.0.0.1，可从手机/电脑远程唤起电视上的界面） |
@@ -161,6 +161,11 @@ bash ps5/build.sh     # 只出 quark-dl_v<版本>.elf
 挂载点上会对能写的目录返回 `EACCES`，于是出现过「正在下载却提示目录不可写」。新建的目录和
 文件都显式 `chmod 0777`（`mkdir`/`open` 的权限位会被 umask 削成 0755/0644），
 和 `/data/homebrew` 下其它内容保持一致，FTP 客户端也能直接写入。
+
+队列只有一份：一个并发上限、一份 `downloads.txt`、重启后一起恢复。页面上分成两份列表只是
+视图——网盘页列出从网盘加的任务，直链页列出粘链接加的任务（`src` 字段区分，来自 fid 是否为空）。
+并发上限是两个页面共用的，所以直链页会直接写出「并发上限 N 个（两个页面共用）」；
+「清掉已完成」也各清各的那一半。
 
 ## 构建
 

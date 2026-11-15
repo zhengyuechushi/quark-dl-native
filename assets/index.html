@@ -302,6 +302,9 @@
           默认保存到 <code id="dirDefault2">/data/homebrew/Quarkdownload</code>。
           文件先写成 <code>.part</code>，校验落盘后才改名，中断了重新加同一个链接会接着下。
         </p>
+        <!-- 直链任务只在这一页列出来；网盘页那份列表只放网盘任务。 -->
+        <p class="note" id="q2Info"></p>
+        <div id="tasks2"></div>
       </div>
     </section>
 
@@ -340,7 +343,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.12.4';
+  var PAGE_V = '0.12.5';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -643,6 +646,41 @@
     return box;
   }
 
+  /* The queue is one list on the server; the two pages show two halves of it.
+   * A task picked from the drive carries src "drive", a pasted link "link".
+   * This is presentation only: one concurrency limit, one downloads.txt, one
+   * set of pause/cancel ids - see the note next to the counter below. */
+  function renderQueue(host, tasks, emptyText) {
+    host.innerHTML = '';
+    if (!tasks.length) {
+      var empty = document.createElement('p');
+      empty.className = 'note';
+      empty.textContent = emptyText;
+      host.appendChild(empty);
+      return;
+    }
+    /* Group tasks that came from a folder under their top-level name, in the
+     * order the folders first appear. Everything else stays flat. */
+    var groups = [];
+    var groupIndex = {};
+    var loose = [];
+    for (var i = 0; i < tasks.length; i++) {
+      var f = topFolder(tasks[i].name);
+      if (!f) { loose.push(tasks[i]); continue; }
+      if (!(f in groupIndex)) {
+        groupIndex[f] = groups.length;
+        groups.push({ folder: f, items: [] });
+      }
+      groups[groupIndex[f]].items.push(tasks[i]);
+    }
+    for (var g = 0; g < groups.length; g++) {
+      host.appendChild(groupNode(groups[g].folder, groups[g].items));
+    }
+    for (var k = 0; k < loose.length; k++) {
+      host.appendChild(taskNode(loose[k]));
+    }
+  }
+
   function pollQueue() {
     if (queueBusy || addBusy) return;
     queueBusy = true;
@@ -653,36 +691,22 @@
       if (data.limit && el('limitSel').value !== String(data.limit)) {
         el('limitSel').value = String(data.limit);
       }
-      var host = el('tasks');
-      var tasks = data.tasks || [];
-      host.innerHTML = '';
-      if (!tasks.length) {
-        var empty = document.createElement('p');
-        empty.className = 'note';
-        empty.textContent = '队列是空的。';
-        host.appendChild(empty);
-        return;
-      }
-      /* Group tasks that came from a folder under their top-level name, in the
-       * order the folders first appear. Everything else stays flat. */
-      var groups = [];
-      var groupIndex = {};
-      var loose = [];
-      for (var i = 0; i < tasks.length; i++) {
-        var f = topFolder(tasks[i].name);
-        if (!f) { loose.push(tasks[i]); continue; }
-        if (!(f in groupIndex)) {
-          groupIndex[f] = groups.length;
-          groups.push({ folder: f, items: [] });
+      var all = data.tasks || [];
+      var drive = [], link = [], running = 0;
+      for (var i = 0; i < all.length; i++) {
+        if (all[i].src === 'link') {
+          link.push(all[i]);
+          if (all[i].state === 'running') { running++; }
+        } else {
+          drive.push(all[i]);
         }
-        groups[groupIndex[f]].items.push(tasks[i]);
       }
-      for (var g = 0; g < groups.length; g++) {
-        host.appendChild(groupNode(groups[g].folder, groups[g].items));
-      }
-      for (var k = 0; k < loose.length; k++) {
-        host.appendChild(taskNode(loose[k]));
-      }
+      renderQueue(el('tasks'), drive, '还没有网盘任务。');
+      renderQueue(el('tasks2'), link, '还没有直链任务。');
+      /* 并发是全局的，所以直链页出现「等待中」而本页 0 个下载中时，通常是网盘那边
+       * 占着槽位。把这几个数字摆在列表上方，省得看起来像卡死了。 */
+      text('q2Info', '本页 ' + link.length + ' 个任务，' + running + ' 个下载中 · 并发上限 ' +
+        (data.limit || 0) + ' 个（两个页面共用）');
     });
   }
 
@@ -746,10 +770,10 @@
     });
   }
 
-  function clearDone(msgId) {
-    json('POST', '/api/dl/clear', '', function (err) {
+  function clearDone(msgId, src) {
+    json('POST', '/api/dl/clear' + (src ? '?src=' + src : ''), '', function (err) {
       if (msgId) {
-        text(msgId, err ? '清空失败：' + err.message : '已清掉已完成的任务');
+        text(msgId, err ? '清空失败：' + err.message : '已清掉本页已完成的任务');
       }
       pollQueue();
     });
@@ -768,8 +792,10 @@
     });
   };
 
-  el('clear').onclick = function () { clearDone(''); };
-  el('clear2').onclick = function () { clearDone('dirState2'); };
+  /* 两个页面各清各的那一半：按钮就长在各自的列表旁边，顺手把另一页的任务也删掉
+   * 会让人以为点错了。 */
+  el('clear').onclick = function () { clearDone('', 'drive'); };
+  el('clear2').onclick = function () { clearDone('dirState2', 'link'); };
 
   el('exit').onclick = function () {
     var btn = el('exit');

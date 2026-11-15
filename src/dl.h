@@ -106,8 +106,17 @@ int dl_cancel(int id);
 int dl_limit(void);
 int dl_set_limit(int n);
 
-/* Removes finished tasks from the list. Returns how many were dropped. */
-int dl_clear_finished(void);
+/* Which half of the queue a task belongs to: a file picked from the drive is
+ * queued by fid, a pasted link has no fid. Both live in the same queue - one
+ * concurrency limit, one downloads.txt - so the two pages filter this field
+ * instead of the engine keeping two queues. */
+#define DL_SRC_ALL   0
+#define DL_SRC_DRIVE 1
+#define DL_SRC_LINK  2
+
+/* Removes finished tasks from the list, restricted to `src` (DL_SRC_ALL drops
+ * every source). Returns how many were dropped. */
+int dl_clear_finished(int src);
 
 int dl_running(void);
 int dl_count(void);

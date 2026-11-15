@@ -535,8 +535,51 @@ nodeFor('clear2').onclick();
 const clear2Req = requests.find((r) => r.url.split('?')[0] === '/api/dl/clear');
 drain();
 check('直链页的「清掉已完成」发到 /api/dl/clear', !!clear2Req);
-check('清空后在原处回显', /已清掉已完成的任务/.test(nodeFor('dirState2').textContent),
+check('清空后在原处回显', /已清掉本页已完成的任务/.test(nodeFor('dirState2').textContent),
       nodeFor('dirState2').textContent);
+
+console.log('\n两个页面各看各的队列');
+/* One queue on the server, two lists on screen: a drive task carries src
+ * "drive", a pasted link carries "link". The split is presentation only, so the
+ * page must also say out loud that the concurrency limit is shared - otherwise
+ * "0 个下载中，5 个等待中" on this page reads like a stuck queue. */
+function allText(node) {
+  let out = node.textContent || '';
+  for (const c of node.children || []) out += ' ' + allText(c);
+  return out;
+}
+
+DEFAULTS['/api/dl/list'] = () => ({
+  ok: true, limit: 3,
+  tasks: [
+    { id: 20, state: 'running', src: 'drive', done: 1, total: 10, attempts: 0, speed: 0, name: '网盘文件.mkv', dir: '/data/homebrew/Quarkdownload', exists: null },
+    { id: 21, state: 'queued', src: 'link', done: 0, total: 10, attempts: 0, speed: 0, name: '直链文件.bin', dir: '/data/homebrew/Quarkdownload', exists: null },
+  ],
+});
+
+requests.length = 0;
+nodeFor('clear2').onclick(); /* clears this page, then re-polls */
+const clearLinkReq = requests.find((r) => r.url === '/api/dl/clear?src=link');
+drain();
+
+check('直链页清空只清直链那半（?src=link）', !!clearLinkReq,
+      clearLinkReq && clearLinkReq.url);
+const driveText = allText(nodeFor('tasks'));
+const linkText = allText(nodeFor('tasks2'));
+check('网盘页只列网盘任务', /网盘文件/.test(driveText) && !/直链文件/.test(driveText), driveText);
+check('直链页只列直链任务', /直链文件/.test(linkText) && !/网盘文件/.test(linkText), linkText);
+check('直链页写明并发是两页共用', /并发上限 3 个/.test(nodeFor('q2Info').textContent),
+      nodeFor('q2Info').textContent);
+check('直链页数出本页有几个任务/几个在跑',
+      /本页 1 个任务，0 个下载中/.test(nodeFor('q2Info').textContent),
+      nodeFor('q2Info').textContent);
+
+requests.length = 0;
+nodeFor('clear').onclick();
+const clearDriveReq = requests.find((r) => r.url === '/api/dl/clear?src=drive');
+drain();
+check('网盘页清空只清网盘那半（?src=drive）', !!clearDriveReq,
+      clearDriveReq && clearDriveReq.url);
 
 console.log('');
 if (failures) {

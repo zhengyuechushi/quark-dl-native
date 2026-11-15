@@ -187,6 +187,45 @@ wait_state "$ID" done
 cmp "$expected" "$DEST/file" || fail "downloaded file differs"
 echo "file ok: $(wc -c <"$DEST/file") bytes"
 
+say "a pasted link saves as its last path segment, not as a directory tree"
+# A name may contain '/' (that is how a drive folder becomes a folder on disk),
+# so a link like .../downloads/apps/desktop/x.bin used to create
+# downloads/apps/desktop/ under the download directory instead of a file.
+curl -fsS -X POST \
+  --data-urlencode "url=http://127.0.0.1:${PLAIN_PORT}/nest/downloads/apps/desktop/deep.bin?size=5000" \
+  --data-urlencode "dir=$DEST" "$BASE/api/dl/add" >"$WORK/add-nest.json"
+cat "$WORK/add-nest.json"
+echo
+IDN=$(python3 -c "import json;print(json.load(open('$WORK/add-nest.json'))['ids'][0])")
+wait_state "$IDN" done
+test -f "$DEST/deep.bin" || fail "expected $DEST/deep.bin, got: $(ls -R "$DEST")"
+test ! -e "$DEST/nest" && test ! -e "$DEST/downloads" \
+  || fail "path segments became directories under the download dir: $(ls -R "$DEST")"
+echo "nested link saved flat: $(wc -c <"$DEST/deep.bin") bytes"
+python3 - "$BASE" <<'PY'
+import json, sys, urllib.request
+d = json.load(urllib.request.urlopen(sys.argv[1] + '/api/dl/list', timeout=10))
+t = [x for x in d['tasks'] if x['name'] == 'deep.bin'][0]
+assert t['src'] == 'link', t
+print('a pasted link is reported as src=link, so the page can list it separately')
+PY
+
+say "clearing one half of the queue leaves the other half alone"
+# The two pages each clear their own list. Without the filter this call would
+# also drop the drive's finished tasks, which is not what the button promises.
+curl -fsS -X POST "$BASE/api/dl/clear?src=drive" >"$WORK/clear-drive.json"
+cat "$WORK/clear-drive.json"
+echo
+python3 - "$BASE" "$WORK/clear-drive.json" <<'PY'
+import json, sys, urllib.request
+cleared = json.load(open(sys.argv[2]))['cleared']
+d = json.load(urllib.request.urlopen(sys.argv[1] + '/api/dl/list', timeout=10))
+left = [x for x in d['tasks'] if x['src'] == 'link']
+assert cleared == 0, 'clearing the drive half dropped %d task(s)' % cleared
+assert left, 'the link task disappeared with the drive clear'
+print('%d link task(s) survived a drive-only clear' % len(left))
+PY
+
 say "a quark CDN link is refused without UA, Referer and cookie"
 # The mock's negative control first: without the three headers it must answer
 # 412, or the positive case below would pass for the wrong reason.

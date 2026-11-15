@@ -353,6 +353,26 @@ jobs:
           print('ok')
           PY
 
+      # One queue in the engine, two lists on screen. The list has to say which
+      # half a task belongs to and clearing has to be able to name one half,
+      # otherwise the two pages would show (and wipe) each other's tasks.
+      - name: Queue is one list, two views
+        run: |
+          set -e
+          python3 - <<'PY'
+          import io
+          dl = io.open('src/dl.c', encoding='utf-8').read()
+          api = io.open('src/api.c', encoding='utf-8').read()
+          htm = io.open('assets/index.html', encoding='utf-8').read()
+          assert 'task_src(t) == DL_SRC_DRIVE ? "drive" : "link"' in dl, 'list does not report src'
+          assert 'dl_clear_finished(which)' in api, 'clear is not restricted to one half'
+          assert 'MHD_GET_ARGUMENT_KIND, "src"' in api, 'clear does not read ?src='
+          assert "el('tasks2')" in htm, 'direct-link page has no queue container'
+          assert "all[i].src === 'link'" in htm, 'page does not split by src'
+          assert "?src=' + src" in htm, 'clear button does not name its half'
+          print('ok')
+          PY
+
       - name: Endpoints and clean exit
         run: |
           set -e

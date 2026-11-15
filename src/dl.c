@@ -345,7 +345,7 @@ sanitize_name(const char *in, char *out, size_t cap) {
 void
 dl_guess_name(const char *url, char *out, size_t cap) {
   const char *p;
-  const char *base;
+  const char *seg;
   const char *end;
   char raw[220];
   size_t n;
@@ -355,25 +355,36 @@ dl_guess_name(const char *url, char *out, size_t cap) {
     snprintf(out, cap, "download.bin");
     return;
   }
-  /* Everything after the last '/' of the path, before '?' or '#'. */
+  /* The last segment of the path, before '?' or '#'. Not the whole path: a name
+   * is allowed to carry '/' (that is how a folder from the drive becomes a
+   * folder on disk), so taking everything after the first slash turned a link
+   * like https://host/downloads/apps/desktop/x.zip into a file tree under the
+   * download directory instead of a file called x.zip. A pasted link is one
+   * file, so only its last segment is the name. */
   p = strstr(url, "://");
   p = p ? p + 3 : url;
-  base = strchr(p, '/');
-  if(!base) {
+  p = strchr(p, '/');
+  if(!p) {
     snprintf(out, cap, "download.bin");
     return;
   }
-  base++;
-  end = base + strcspn(base, "?#");
-  if(end == base) {
+  end = p + strcspn(p, "?#");
+  seg = p;
+  while(p < end) {
+    if(*p == '/') {
+      seg = p + 1;
+    }
+    p++;
+  }
+  if(seg >= end) {
     snprintf(out, cap, "download.bin");
     return;
   }
-  n = (size_t)(end - base);
+  n = (size_t)(end - seg);
   if(n >= sizeof(raw)) {
     n = sizeof(raw) - 1;
   }
-  memcpy(raw, base, n);
+  memcpy(raw, seg, n);
   raw[n] = 0;
   sanitize_name(raw, out, cap);
 }
@@ -1719,8 +1730,16 @@ dl_retry(int id) {
   return n;
 }
 
+/* A drive task is queued by fid, a pasted link has no fid to fetch a link for.
+ * That is the whole difference, and it survives a restart because fid is
+ * persisted with the task. */
+static int
+task_src(const dl_task *t) {
+  return t->fid[0] ? DL_SRC_DRIVE : DL_SRC_LINK;
+}
+
 int
-dl_clear_finished(void) {
+dl_clear_finished(int src) {
   int i;
   int n = 0;
 
@@ -1728,7 +1747,7 @@ dl_clear_finished(void) {
   for(i = 0; i < g_count; i++) {
     dl_task *t = &g_task[i];
 
-    if(!t->id) {
+    if(!t->id || (src != DL_SRC_ALL && task_src(t) != src)) {
       continue;
     }
     if(t->state == DL_DONE || t->state == DL_FAILED || t->state == DL_CANCELED ||
@@ -1870,9 +1889,12 @@ dl_json(char *out, size_t cap) {
         t->sample_ms = now;
       }
       if(app(out, cap, &used,
-             "{\"id\":%d,\"state\":\"%s\",\"attempts\":%d,\"done\":%lld,"
-             "\"total\":%lld,\"speed\":%lld,\"exists\":%s,\"name\":",
-             t->id, state_name(t->state), t->attempts, t->done, t->total,
+             "{\"id\":%d,\"state\":\"%s\",\"src\":\"%s\",\"attempts\":%d,"
+             "\"done\":%lld,\"total\":%lld,\"speed\":%lld,\"exists\":%s,"
+             "\"name\":",
+             t->id, state_name(t->state),
+             task_src(t) == DL_SRC_DRIVE ? "drive" : "link", t->attempts,
+             t->done, t->total,
              speed, exists < 0 ? "null" : (exists ? "true" : "false")) < 0 ||
          jstr(out, cap, &used, t->name) < 0 ||
          app(out, cap, &used, ",\"dir\":") < 0 ||

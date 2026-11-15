@@ -827,13 +827,25 @@ api_dl_retry(struct MHD_Connection *conn, const char *method) {
 static enum MHD_Result
 api_dl_clear(struct MHD_Connection *conn, const char *method) {
   char body[120];
+  const char *src;
+  int which = DL_SRC_ALL;
 
   if(strcmp(method, MHD_HTTP_METHOD_POST)) {
     return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
                      "{\"ok\":false,\"error\":\"use POST\"}");
   }
+  /* One queue, two lists. Each page's button sits next to the list it talks
+   * about, so ?src=drive|link drops only that half - without it the button on
+   * the direct-link page would silently wipe the drive's finished tasks too.
+   * No argument still means "everything", which is what old callers send. */
+  src = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "src");
+  if(src && !strcmp(src, "drive")) {
+    which = DL_SRC_DRIVE;
+  } else if(src && !strcmp(src, "link")) {
+    which = DL_SRC_LINK;
+  }
   snprintf(body, sizeof(body), "{\"ok\":true,\"cleared\":%d}",
-           dl_clear_finished());
+           dl_clear_finished(which));
   return send_json(conn, MHD_HTTP_OK, body);
 }
 
