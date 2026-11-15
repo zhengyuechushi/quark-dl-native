@@ -260,19 +260,35 @@ jobs:
       - name: Home-screen entry is registered at runtime
         run: |
           set -e
-          grep -q "launcher_install_if_needed(port)" src/main.c
           grep -q "src/launcher.c" Makefile
           grep -q 'LAUNCH_DIR "/sce_sys"' src/launcher.c
-          grep -q "sceAppInstUtilAppInstallTitleDir" src/launcher.c
+          grep -q "libSceAppInstUtil.sprx" src/launcher.c
+          grep -q "Wudg3Xe3heE" src/launcher.c
           grep -q "sceAppInstUtilInitialize" src/launcher.c
           grep -q "assets/param.json" src/launcher.c
           grep -q "assets/icon0.png" src/launcher.c
           grep -q '^TITLE_ID    := QDLK85200' Makefile
           grep -q '"titleId": "QDLK85200"' assets/param.json
           grep -q '"deeplinkUri": "http://127.0.0.1:8520/"' assets/param.json
-          # A failure to register must not stop the server: the icon is an
-          # extra, and a boot that dies here would take the whole app with it.
-          grep -A4 "launcher_install_if_needed(port)" src/main.c | grep -q "注册主屏幕条目失败"
+
+          # 0.12.0 把注册同步放在 websrv_listen() 之前，真机上的结果是整个
+          # payload 都没起来：没有通知、8520 不通。安装器是系统调用，可能几十
+          # 秒不返回，所以只能跑在后台线程里，而且要排在"端口是多少"之后。
+          grep -q "pthread_create" src/launcher.c
+          grep -q "PTHREAD_CREATE_DETACHED" src/launcher.c
+          grep -q "launcher_start(port)" src/main.c
+          grep -q "launcher_serve_icon()" src/main.c
+          ! grep -q "launcher_install_if_needed" src/main.c src/launcher.c
+
+          # The serving path, in order: bind the port, tell the user, register
+          # the icon off-thread, then serve. Nothing blocking may sit between
+          # the port being chosen and websrv_listen.
+          awk '/api_set_port\(port\)/,/websrv_listen\(port\)/' src/main.c > /tmp/serve_path.c
+          grep -q "notify_user" /tmp/serve_path.c
+          grep -q "launcher_start(port)" /tmp/serve_path.c
+          N=$(grep -n "notify_user" /tmp/serve_path.c | head -1 | cut -d: -f1)
+          L=$(grep -n "launcher_start(port)" /tmp/serve_path.c | cut -d: -f1)
+          test "$N" -lt "$L" || { echo "notification must precede the launcher"; exit 1; }
           echo ok
 
       # The page ships inside the ELF, so what it does is invisible until it is

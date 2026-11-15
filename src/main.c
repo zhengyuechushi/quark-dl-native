@@ -214,16 +214,16 @@ main(int argc, char **argv) {
     boot_trace("监听端口 %u", (unsigned)port);
     api_set_port(port);
 
-#ifdef __SCE__
-    /* 主屏幕条目：运行时用系统的 AppInstUtil 注册一个网页应用，点它由系统
-     * 自己开浏览器到 <本机>:<port>。失败只记日志，服务该起还得起 —— 图标
-     * 是加分项，不是启动前提。 */
-    if(launcher_install_if_needed(port)) {
-      boot_trace("注册主屏幕条目失败: %s", launcher_status());
-    } else {
-      boot_trace("主屏幕条目 %s: %s", launcher_title_id(), launcher_status());
-    }
+    /* 图标挂到 /icon0.png（页面 favicon）。这一步只是往 asset 链表插一个
+     * 节点，没有系统调用，必须放在 websrv 起来之前：那张表没有锁。 */
+    launcher_serve_icon();
 
+#ifdef __SCE__
+    /* 通知排在注册之前，中间不许插任何可能阻塞的东西。
+     *
+     * 0.12.0 是"先同步注册、再通知"：注册一卡住，通知没发出去、端口也没起
+     * 来，屏幕上什么都没有 —— 加载成功和加载失败在用户眼里完全一样。现在
+     * "端口是多少"永远是第一条能看见的信息，也是日志对不上的时候唯一的锚点。 */
     if(notified_port != port) {
       notify_user("Quark DL %s\n端口: %u\n进程: %s",
                   BUILD_ID, (unsigned)port, PROCESS_NAME);
@@ -231,6 +231,12 @@ main(int argc, char **argv) {
       boot_trace("通知已发出");
     }
 #endif
+
+    /* 主屏幕条目在后台线程里注册，立刻返回。安装器是系统调用，真机上可能
+     * 几十秒不返回，卡在这里就等于整个 payload 起不来。失败只影响图标。 */
+    if(launcher_start(port)) {
+      boot_trace("主屏幕条目 %s: %s", launcher_title_id(), launcher_status());
+    }
 
     websrv_listen(port);
     boot_trace("websrv_listen 返回, stop=%d", websrv_stop_requested());
