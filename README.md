@@ -6,6 +6,8 @@
 
 - 当前版本：**0.12.6**（版本演进见 [CHANGELOG.md](CHANGELOG.md)）
 - 形态：`quark-dl_v0.12.6.elf`，约 1 MB（其中 ~200 KB 是根证书库）
+- 获取：[Releases](https://github.com/zhengyuechushi/quark-dl-native/releases) 直接下这个文件；
+  自己编译的产物在 Actions 的 artifacts 里
 - 主屏幕图标：由 payload 自己注册，点图标直接开控制页
 
 ## 一分钟装机
@@ -102,7 +104,7 @@ bash ps5/build.sh          # 产物 quark-dl_v<版本>.elf，无其他副产品
 ```
 
 镜像里做三件事：装 ps5-payload-sdk v0.43、交叉编译 libmicrohttpd、交叉编译 mbedTLS 2.28.8。
-`push` 会自动触发 CI，产物在对应 run 的 artifacts 里。
+`push` 会自动触发 CI，产物在对应 run 的 artifacts 里；发版时附到 Release 上。
 
 在 Linux 上跑同一份代码（CI 就是这么测的）：
 
