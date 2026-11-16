@@ -1,210 +1,165 @@
-# Quark DL — 登录、浏览、下载网盘文件
+# Quark DL — PS5 上的夸克网盘下载器
 
-阶段一（能加载、进程名 `quark-dl.elf`、能主动退出）和阶段二（TLS、下载引擎、断点续传、
-队列持久化、网络自检）都已在实机通过。业务层这一版有两种登录方式：
+一个越狱 PS5 的 **payload**：加载后在主机上跑一个小型 HTTP 服务，用浏览器（主机自带或同一
+局域网的手机/电脑）扫码登录夸克网盘、浏览目录、勾选文件或文件夹，下载到主机磁盘。
+产物是**单个 ELF**，没有安装包、没有依赖、没有 zip。
 
-1. **扫码登录（默认）**：页面上出一张二维码，手机上的夸克 App 扫一下、点确认，进程自己去换 Cookie；
-2. **粘贴 Cookie（兜底）**：扫不了码时，从电脑浏览器取一次 Cookie 粘进来——四种粘法都认
-   （裸值 / `Cookie:` 整行 / 整块请求头 / `Copy as cURL` 的整段命令）；
-3. **浏览**：面包屑 + 目录列表，字段名与路径来自实测；
-4. **下载**：勾选文件或整个文件夹，批量换直链后交给阶段二的引擎——引擎一行没改。
+- 当前版本：**0.12.6**（版本演进见 [CHANGELOG.md](CHANGELOG.md)）
+- 形态：`quark-dl_v0.12.6.elf`，约 1 MB（其中 ~200 KB 是根证书库）
+- 主屏幕图标：由 payload 自己注册，点图标直接开控制页
 
-两种登录最后都落到同一份 `cookie.txt`，所以浏览、下载、续传的代码完全不区分来源。
+## 一分钟装机
 
-## 扫码是怎么实现的
+1. **加载**：Payload Manager 导入，或 `nc <PS5-IP> 9021 < quark-dl_v0.12.6.elf`；
+2. **看通知**：屏幕右上出现 `Quark DL 0.12.6 / 端口: 8520 / 进程: quark-dl.elf` —— 出现即服务已就绪；
+3. **点图标**：退回主屏幕等 2~3 秒，出现「夸克网盘下载」；点它，系统自己打开控制页。
+   图标没出来也不影响使用，浏览器手输 `http://<PS5-IP>:8520` 一样。
 
-四个接口全部从 `pan.quark.cn` 自己的前端 bundle 里读出来，不是猜的，并且逐条对本机实测过：
+> 装过 0.11.0 的磁贴？先删掉 `/data/homebrew/QDLK85200/` 再重启，否则会有两个同名图标。
 
-| 步骤 | 请求 | 实测 |
-|---|---|---|
-| 取一次性 token | `GET uop.quark.cn/cas/ajax/getTokenForQrcodeLogin` | `{"status":2000000,"data":{"members":{"token":"sta…"}}}` |
-| 二维码内容 | `https://su.quark.cn/4_eMHBJ?token=<token>&client_id=532&ssb=weblogin&uc_biz_str=…` | 302（正常跳到落地页） |
-| 轮询（2 秒一次） | `GET uop.quark.cn/cas/ajax/getServiceTicketByQrcodeToken?token=<token>` | 没人扫时 `{"status":50004001,"message":"Query result is empty"}` |
-| 票据换会话 | `GET pan.quark.cn/account/info?st=<ticket>&lw=scan` | 会话在 `Set-Cookie` 里，且必须含 `__pus` / `__puus` |
+详细的实机验收步骤（含每条失败现象怎么读）在 [docs/verification.md](docs/verification.md)。
 
-等待码 `50004001 80005000 80005001 80005002`、过期码 `50004002 80005003 80005004`、
-成功码 `2000000`，都取自同一份 bundle。**没见过的状态码当失败处理**，不留在「等待扫码」里干等。
+## 能做什么
 
-二维码本身由 `assets/qrcode.js`（byte mode / 纠错 M，零依赖）在页面里画到 canvas 上，
-不是去求第三方接口生成图片。这份编码器用 OpenCV 解码反验过：187 字节的真实 URL 能原样解出。
+**登录**：扫码（默认）或粘贴 Cookie（四种粘法都认：裸值 / `Cookie:` 整行 / 整块请求头 /
+`Copy as cURL`）。扫码四个接口的实测记录见 [docs/quark-api.md](docs/quark-api.md)。
 
-## 当前构建
+**浏览与下载**：
 
-| 项 | 值 |
-|---|---|
-| 版本 | `Makefile` 的 `APP_VERSION`（0.6.0）；页面里的 `PAGE_V` 必须与它一致，CI 校验。产物文件名带版本号 `quark-dl_v0.6.0.elf`，Payload Manager 会把它显示成标题 `quark dl` + 版本 `v0.6.0` |
-| build id | 见 CI 产物（ELF 里可 `grep` 到完整 sha，用来确认刷进去的是哪一版） |
-| 大小 | 约 850 KB（mbedTLS + 200 KB 根证书库 + 业务层 + 二维码编码器） |
-| CI | `elf` 与 `linux-smoke` 全绿，含 JSON 解析器、Cookie 解析与 Set-Cookie 归并单测、页面行为测试 |
+- 面包屑导航；勾选文件或整个文件夹；单次上限 2000 个文件、递归 32 层；
+- 文件夹按网盘层级还原到本地目录树，不是平铺；
+- 队列可暂停 / 继续 / 取消 / 重试，每个文件和每个文件夹都有实时速度，文件夹分组可折叠；
+- **队列只有一份，页面是两个视图**：网盘页列从网盘加的，直链页列粘链接加的；
+- **并发上限各页独立**（默认各 2 个）：网盘排 40 个文件时，直链那边照样能立刻开下自己的 2 个。
 
-阶段一、二在 CI 里长期成立的那几项：https 用自签 CA 通过、换一个未知 CA 被拒**并报出被拒的那张证书**、
-300 KB 逐字节一致、预置 `.part` 产生 `Range: bytes=120000-` 并续传成功、chunked 无 `Content-Length`、
-404 直接判失败不重试、TLS 下载、重复链接复用同一任务、**删掉文件后重新加同一链接会真的重下**、
-重试接口把终态任务重新排队、队列落盘、**重启后被删文件的任务读作 `missing` 而不是 `failed`**。
+**下载引擎**：
 
-## 夸克接口：哪些是实测的，哪些是推断的
+- 先写 `<名字>.part`，`fsync` 后改名 —— 中断只会留下可续传的 `.part`；
+- 大文件（≥64 MiB）切 32 MiB 段、8 连接并行，突破 CDN 单连接限速；
+- 直链懒加载：队列只存 fid，下载开始才换链，排多后都不会 412；重试/重新下载都会换新链；
+- 同名文件已存在则跳过；剩余空间 < 64 MB 在开始前就报错。
 
-夸克网盘没有公开文档。这一节把「已经确认」和「猜的」分开写清楚，因为两者的故障表现完全不同。
+**设置**：默认保存目录（默认 `/data/homebrew/Quarkdownload`）、两页各自的并发数，都写进
+`settings.txt`，重启保留。
 
-**实测确认**（不带 cookie 直接打）：
+## 页面与接口
 
-| 请求 | 返回 | 结论 |
-|---|---|---|
-| `GET drive-pc.quark.cn/1/clouddrive/file/sort?...` | `401 {"code":31001,"require login [guest]"}` | 路径对，只差登录；`31001` 即会话失效 |
-| `GET /1/clouddrive/file/download?...` | `405 Method Not Allowed` | 必须 POST |
-| `GET /1/clouddrive/member?...` | `401 {"code":31001}` | 路径对 |
-| `GET /1/clouddrive/config?...` | `401 {"code":31001}` | 路径对 |
-| `GET pan.quark.cn/account/usercode?st=x` | `{"code":"GET_SERVICE_CODE_ERROR"}` | 扫码链路的起点，缺 `st` 票据 |
-
-配置来源是 `pan.quark.cn` 首页引用前端 bundle 里的运行时常量：
-`bizHost = https://pan.quark.cn`、API 域 `https://drive-pc.quark.cn`、固定参数 `pr=ucpro&fr=pc`。
-
-**推断的**（只在有 cookie 时才能验证）：返回体里的字段名——`data.list[].file_name`、`dir`、
-`size`、`updated_at`、`metadata._total`、`data[].download_url`。代码对每个字段都试了历史上用过的几种
-写法，全部取不到时会**明确报错并附上原始响应**，而不是显示一个空目录。
-
-`/api/quark/probe?path=...` 就是为此存在的：任意路径，原样返回。
-猜错的时候，看到的是真实字节，而不是「你的网盘是空的」。
-
-## 端口与接口
-
-端口 **8520**（被占则向后找，最多 32 个）。`8888` 是参考 payload 的默认值，实机上已被别的插件占用。
+端口 **8520**（被占则向后找，最多 32 个；主屏幕条目里的地址会自动跟着改）。
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | GET | `/` | 控制页 |
 | GET | `/api/health` | 存活 |
-| GET | `/api/diag` | 诊断；浏览器看网页版，脚本拿 JSON（`?format=json`、`.txt`） |
-| GET | `/api/net/selftest?url=` | 网络自检，返回每一步的结果与耗时 |
+| GET | `/api/diag` | 诊断；浏览器看网页版，脚本拿 JSON（`?format=json`）/ `.txt` |
+| GET | `/api/log` | `boot.log` 原文（页面「日志」页签） |
+| GET | `/api/net/selftest?url=` | 网络自检：DNS / TCP / TLS / 证书 / HTTP 每一步与耗时 |
+| GET | `/api/dl/list` | 队列快照（`src` 标明 drive/link，`limit_*` 与 `running_*` 分来源） |
 | POST | `/api/dl/add` | 表单 `url=`（可多行）`&dir=` `&name=` |
-| GET | `/api/dl/list` | 队列快照（含进度、错误，`src` 标明来自网盘还是直链） |
 | POST | `/api/dl/cancel?id=` | 取消一个（`id=all` 全部） |
-| POST | `/api/dl/clear` | 清掉已结束的任务；`?src=drive` / `?src=link` 只清那一半，不带参数清全部 |
-| GET/POST | `/api/settings` | 读取/设置默认保存目录 |
-| GET | `/api/fs/list?path=` | 列目录 |
-| POST | `/api/open-ui` | 让主机浏览器打开控制页（只允许 127.0.0.1，可从手机/电脑远程唤起电视上的界面） |
-| POST | `/api/exit` | 进程自己退出（可重新加载） |
+| POST | `/api/dl/pause?id=` | 暂停（保留 `.part`） |
+| POST | `/api/dl/resume?id=` | 继续（从断点） |
+| POST | `/api/dl/retry?id=` | 终态任务重新排队（会换新直链） |
+| POST | `/api/dl/clear?src=` | 清掉已结束任务；`drive` / `link` 只清一半 |
+| GET/POST | `/api/settings` | 目录与并发。POST 的 `dir` / `limit` 都可选，`limit` 用 `src=drive\|link` 指明哪一份 |
+| GET | `/api/fs/list?path=` | 列目录（最多 200 条，`truncated` 标记截断） |
+| GET | `/api/quark/qr` `status` `list` `probe` | 扫码取图、会话状态、目录列表、原始 JSON |
+| POST | `/api/quark/login` `logout` `add` | 粘贴 Cookie 登录、退出、把勾选项入队 |
+| POST | `/api/open-ui` | 让主机浏览器打开控制页（**只认 127.0.0.1**） |
+| POST | `/api/exit` | 进程自己退出，重新加载 ELF 即可再起 |
 
-## 主屏幕图标
-
-只发 payload ELF 时，主机上没有任何图标：你只能从 Payload Manager 加载它，再自己把地址
-敲进浏览器。现在 payload 自己把这件事补上——**第一次启动时**，它会往
-`/user/app/QDLK85200/sce_sys/` 写一份 `param.json` 和 `icon0.png`，然后调用系统自己的
-安装器 `sceAppInstUtilAppInstallTitleDir()` 注册一个**网页应用条目**。主屏幕上就出现一块
-「夸克网盘下载」的图标（图标就是夸克的蓝色圆标）。
-
-这个条目由系统直接拉起，点它系统自己打开浏览器到 `http://127.0.0.1:8520/`——不需要
-第二次加载 ELF，不需要 `sce_module`，也不需要把目录挂到 `/data/homebrew`。
-
-要点：
-
-- **图标内容是嵌在 ELF 里的**，和 payload 永远同版本，不会出现"图标是新的、服务是旧的"。
-- **端口变了会自己校准**：8520 被别的插件占了、实际起在 8521，条目里的地址也跟着改成 8521。
-  已有条目只改地址，不覆盖——你在系统里改过的名字不会丢。
-- **注册跑在后台线程里，永远不挡服务**：启动顺序是「选端口 → 发通知 → 起线程注册 →
-  开始接请求」。安装器是系统调用，慢起来几十秒不返回，所以它绝不能在 `websrv_listen()`
-  之前同步执行——0.12.0 就是这么写的，真机结果是整个 payload 没起来（无通知、端口不通）。
-  现在最坏情况只是"没有图标"。每一步都写 `/data/quark-dl/boot.log`，失败看最后一行。
-- 想删掉图标：删 `/user/app/QDLK85200/` 整个目录，再重启一次主机。
-
-构建就是一条命令，没有额外产物：
-
-```bash
-bash ps5/build.sh     # 只出 quark-dl_v<版本>.elf
-```
-
-> 装一次 ELF 就有图标。换新版重新加载 ELF 即可，条目会自动更新地址。
-
-
-## 先做这一步：网络自检
-
-加载 ELF，浏览器打开 `http://<PS5-IP>:8520`，在「网络自检」里点**开始自检**。
-默认目标是 `https://pan.quark.cn/`，结果逐行给出：
+## 项目结构
 
 ```
-✓ pan.quark.cn → 203.119.174.54（getaddrinfo，12 ms）
-  TLS TLSv1.2 / TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-  服务器证书 C=CN, ST=Zhejiang, L=Hangzhou, O=Alibaba (China) Technology Co., Ltd., CN=*.alibaba.com · 到期 2027-03-26
-  签发者 C=BE, O=GlobalSign nv-sa, CN=GlobalSign GCC R46 OV TLS CA 2025
-  HTTP 200 · 42461 字节 · 341 ms
+quark-dl-native/
+├── src/                    纯 C，约 9900 行；除 MHD 与 mbedTLS 外无第三方依赖
+│   ├── main.c              启动顺序、选端口、回收旧实例
+│   ├── websrv.c            MHD 封装、accept 循环、请求体收集（4 MB 上限）
+│   ├── api.c               全部 /api/*、表单解析、诊断页
+│   ├── dl.c                队列、并发槽、暂停/取消、分段下载、落盘
+│   ├── quark.c             夸克接口（扫码、目录、换直链）、会话持久化
+│   ├── net.c               socket、自解析 DNS、TLS 会话与证书信息
+│   ├── httpc.c             HTTP 客户端（Range / 重定向 / chunked）
+│   ├── json.c  cookie.c    极简 JSON 与 cookie jar
+│   ├── asset.c             内存资源表（页面从内存出，不碰文件系统）
+│   ├── launcher.c          主屏幕条目注册（后台线程）
+│   └── boot.c  notify.c  kern.c  shell.c   boot.log 与平台层
+├── assets/                 index.html、qrcode.js、icon0.png、param.json、ca.pem
+├── tools/                  test-stage2.sh（引擎）、test-page.mjs（页面）、mockdl.py、C 单测
+├── ps5/                    Dockerfile + build.sh（唯一的正式构建入口）
+├── docs/                   设计说明、接口事实、验证手册、归档
+├── .github/workflows/      build-elf.yml —— 构建与全部测试都在这里
+├── Makefile                版本号（APP_VERSION）与两套目标（PS5 / Linux host）
+├── dist/                   最近一次构建的产物（不进 git）
+└── CHANGELOG.md  README.md  LICENSE  NOTICE.md
 ```
-
-这四行是唯一能同时说清四件事的地方：
-
-- **解析失败** → 主机 DNS 不通（`net.c` 会退回 `/etc/resolv.conf` 与 223.5.5.5 自行查询）；
-- **TLS 握手失败** → 网络被劫持/需要代理，或主机时间不对；
-- **证书校验失败** → 同上，这也是它必须单独报错的原因；
-- **有 HTTP 状态码** → 传输层通了，之后都是应用层的事。
-
-> **`api.quark.cn` 不要拿来当探针**（0.2.1 的默认值是它，选错了）。该域名解析得到
-> `203.119.174.x`，但那边 ingress 只吐 `Kubernetes Ingress Controller Fake
-> Certificate` 自签证书、HTTP 层 404，是台废弃入口。拿它自检等于每次开机先报一个红叉，
-> 而主机其实完全正常。真正可用的域名 `pan.quark.cn`、`drive-pc.quark.cn` 都挂在
-> `*.quark.cn` 这张 GlobalSign 泛域名证书下。
-
-## 下载行为
-
-- 先写 `<名字>.part`，`fsync` 成功后才改名成正式文件——中断只留下可续传的 `.part`，
-  不会留下一个看起来完整、其实截断的文件；
-- 重新加同一链接时，若 `.part` 已有一半，就带 `Range: bytes=N-` 接着下；服务器若忽略 Range
-  返回 200，则清空重下（而不是把第二份追加在第一份后面）；
-- 链接过期（400/401/403/404/410）**不重试**，直接失败并写明 HTTP 状态；网络中断才重试，
-  最多 4 次，间隔 1/2/4 秒；
-- 同名文件已存在则跳过；重复添加同一 URL 返回同一个任务，不会下两遍；
-- 同时最多 3 个（`DL_LIMIT`），队列落盘到 `/data/quark-dl/downloads.txt`，重启后继续；
-- 剩余空间不足 64 MB 时在开始前就报错。
-
-默认目录 `/data/homebrew/Quarkdownload`：单独一个子目录，不和安装的 payload 混在一起
-（0.12.2 从 `/data/homebrew` 改过来；旧设置里的老默认值会自动迁移）。
-
-「能不能写」用**建一个探针文件**来判断，不用 `access(W_OK)`——后者在这台主机的 `/data`
-挂载点上会对能写的目录返回 `EACCES`，于是出现过「正在下载却提示目录不可写」。新建的目录和
-文件都显式 `chmod 0777`（`mkdir`/`open` 的权限位会被 umask 削成 0755/0644），
-和 `/data/homebrew` 下其它内容保持一致，FTP 客户端也能直接写入。
-
-队列只有一份：一份 `downloads.txt`、重启后一起恢复。页面上分成两份列表只是
-视图——网盘页列出从网盘加的任务，直链页列出粘链接加的任务（`src` 字段区分，来自 fid 是否为空）。
-**并发上限按来源各有一套**，默认都是 2 个，两页各自的选择器改的是自己那一份：网盘那边排了
-40 个文件时，直链页照样能立刻开下它自己的 2 个，不会互相占槽位。选择存在 `settings.txt` 的
-`limit_drive=` / `limit_link=` 里，重启后保留。「清掉已完成」也各清各的那一半。
 
 ## 构建
 
-```sh
-BUILD_ID=$(git rev-parse HEAD) bash ps5/build.sh     # 需要 Docker
+正式构建只能走 GitHub Actions —— PS5 SDK 只在 Linux 上，且需要 Docker：
+
+```bash
+bash ps5/build.sh          # 产物 quark-dl_v<版本>.elf，无其他副产品
 ```
 
-镜像内做三件事：装 SDK v0.43、交叉编译 libmicrohttpd、交叉编译 mbedTLS 2.28.8。
-产物 `quark-dl_v0.6.0.elf` 约 1 MB（根证书 200 KB + mbedTLS）。
+镜像里做三件事：装 ps5-payload-sdk v0.43、交叉编译 libmicrohttpd、交叉编译 mbedTLS 2.28.8。
+`push` 会自动触发 CI，产物在对应 run 的 artifacts 里。
 
-主机上跑同一份代码（CI 就是这么测的）：
+在 Linux 上跑同一份代码（CI 就是这么测的）：
 
-```sh
+```bash
 MBEDTLS_PREFIX=$HOME/mbedtls MBEDTLS_CC=cc MBEDTLS_AR=ar MBEDTLS_RANLIB=ranlib \
   bash install-mbedtls.sh
 make linux BUILD_ID=smoke TLS_PREFIX=$HOME/mbedtls
 bash tools/test-stage2.sh
 ```
 
-`tools/test-stage2.sh` 起三个本地服务器（明文、受信 CA 的 TLS、不受信 CA 的 TLS），逐条断言：
-HTTPS 自检成功、未知 CA 被拒、300 KB 下载逐字节一致、预置 `.part` 触发 `Range: bytes=120000-`、
-chunked 解码、404 报告、TLS 下载、重复链接不重复下载、队列落盘。
+只改页面时，本地就能跑一部分测试，不必等构建：
 
-## 两个构建/设计决定
+```bash
+node tools/test-page.mjs   # 用 stub DOM 跑 assets/index.html 的交互
+```
 
-- **TLS 为什么不用系统的 `libSceSsl`**：SDK 里确实有它的存根，但存根只对「该模块已加载进本进程」
-  有效；payload 无法预先知道这一点，失败时只会得到一句没有信息量的错误。自带 mbedTLS 是唯一
-  可离线验证的选择，代价是体积。
-- **HTTP 客户端为什么自己写**：只需要 GET/POST、Range、重定向、chunked 四件事；再引入一个
-  autoconf 的 libcurl，就是给交叉编译多开一条会失败的路。`Connection: close` 每请求一条连接，
-  没有连接池要维护，卡住的下载也不会留下半复用的 socket。
+**版本号只有一处**：`Makefile` 的 `APP_VERSION`。页面里的 `PAGE_V` 必须与它一致，
+CI 会比对，不一致直接失败。
 
-## 下一步
+## 测试与 CI
 
-夸克登录（扫码 / Cookie）、网盘目录浏览、多选与文件夹递归。它们只调用这里的
-`http_perform()` 与 `dl_add()`，不再碰已经验证过的传输层。
+顺序是「编译 → 静态断言 → 起服务器跑真实请求 → 引擎测试 → 单测」，任一失败即阻断：
+
+| 步骤 | 覆盖 |
+|---|---|
+| Verify ELF shape | 体积、`.incbin` 资源、无遗留磁贴代码 |
+| Home-screen entry payload | `param.json` 的 titleId / deeplinkUri / 分类 |
+| Home-screen entry is registered at runtime | 启动顺序（通知必须在注册之前），禁止同步注册复活 |
+| Default download directory | 默认目录、旧值迁移、页面 placeholder 一致 |
+| Download directory is checked by writing into it | 探针文件判断，不用 `access(W_OK)` |
+| Pause and cancel are distinct | 暂停保留 `.part`、取消删除 |
+| Big files download over parallel ranges | 分段与并发连接 |
+| Links are minted lazily | 队列里没有预签直链 |
+| Page behaviour / Direct-link pane layout | 页面交互与按钮位置（stub DOM） |
+| Queue is one list, two views | 两页分视图、并发按来源分预算、`?src=` 清一半 |
+| Endpoints and clean exit | 真实 HTTP 全链路：诊断、页面、超长路径 404、无 CORS、干净退出 |
+| Download engine and TLS | 明文 / TLS / 坏证书三个本地服务器：续传、chunked、逐字节一致 |
+| JSON parser / Cookie paste / Log on failure | 单测 |
+
+## 安全边界（务必读）
+
+服务监听 `0.0.0.0`，**没有登录校验**：任何能访问 8520 的设备都能加下载任务（可指定任意目录）、
+改默认目录、看队列和日志、关掉服务。设计前提是「家用局域网里的可信设备」。
+**不要把这个端口映射到公网。** 细节与其它约束见 [docs/design-notes.md](docs/design-notes.md)。
+
+## 文档索引
+
+| 文档 | 内容 |
+|---|---|
+| [CHANGELOG.md](CHANGELOG.md) | 从 0.1.x 到 0.12.6 的演进，以及升级注意 |
+| [docs/verification.md](docs/verification.md) | 实机验收手册：每一步该看到什么、失败怎么读 |
+| [docs/design-notes.md](docs/design-notes.md) | 接手必读：线程模型、锁、落盘、为什么这么写 |
+| [docs/quark-api.md](docs/quark-api.md) | 夸克接口哪些是实测的、哪些是推断的 |
+| [docs/archive/plan-stage3.md](docs/archive/plan-stage3.md) | 历史归档：0.3.0 之前的方案稿，已过时 |
 
 ## 许可
 
-GPL-3.0-or-later。来源与逐文件对应关系见 `NOTICE.md`；第三方组件为 mbedTLS（Apache-2.0）
-与 Mozilla CA 根证书包（MPL-2.0），均未修改。
+GPL-3.0-or-later。`src/main.c`、`src/websrv.c`、`src/asset.c` 的骨架来自
+[owendswang/ps5-web-file-manager](https://github.com/owendswang/ps5-web-file-manager)，
+第三方组件与出处见 [NOTICE.md](NOTICE.md)。

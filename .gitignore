@@ -1,3 +1,4 @@
+# 构建中间产物
 quark-dl.elf
 quark-dl-linux
 gen/
@@ -5,7 +6,15 @@ gen/
 *.o
 server.log
 
+# 本地跑出来的数据目录
 .quark-dl-data/
 .smoke-data/
 .smoke-dl/
+
+# 产物与归档：不进仓库，CI artifacts 才是权威来源
+dist/
 deliverables-stage*/
+
+# Python 缓存
+__pycache__/
+*.pyc
