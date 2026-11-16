@@ -80,7 +80,14 @@ websrv_body_too_large(struct MHD_Connection *conn) {
 enum MHD_Result
 websrv_queue_response(struct MHD_Connection *conn, unsigned int status,
                       struct MHD_Response *resp) {
-  MHD_add_response_header(resp, MHD_HTTP_HEADER_ACCESS_CONTROL_ALLOW_ORIGIN, "*");
+  /* No Access-Control-Allow-Origin here, on purpose.
+   *
+   * The page is served from this same origin, so it never needed CORS. A "*"
+   * only widened the blast radius: any site the user happens to have open in
+   * the console browser could read /api/dl/list and /api/diag across origins -
+   * and with them the queue, the paths, and the signed CDN links - or drive
+   * /api/dl/add and /api/settings. Everything this server exposes is meant for
+   * the machine it runs on, not for every page that can reach its port. */
   MHD_add_response_header(resp, MHD_HTTP_HEADER_CACHE_CONTROL, "no-store");
   return MHD_queue_response(conn, status, resp);
 }

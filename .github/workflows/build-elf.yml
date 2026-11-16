@@ -462,6 +462,29 @@ jobs:
           echo "status $code"
           test "$code" = 404
 
+          # Two hardening checks, one request each. The long-target one is the
+          # regression test for a stack overflow: asset_request copied the whole
+          # target into char path[PATH_MAX] with no bound, so a request with a
+          # very long path ran off the stack. The second keeps the API from
+          # granting cross-origin reads again - the page is same-origin and never
+          # needed it, while a "*" let any other open page read the queue and the
+          # signed CDN links.
+          echo "--- a very long request target is a 404, not a crash ---"
+          LONG=$(python3 -c 'print("a" * 5000)')
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "$base/$LONG")
+          echo "status $code"
+          test "$code" = 404
+          curl -fsS "$base/api/health" > /dev/null
+          echo "still alive"
+
+          echo "--- the API grants no cross-origin access ---"
+          curl -sS -D acao.txt -o /dev/null "$base/api/health"
+          if grep -qi '^access-control-allow-origin' acao.txt; then
+            echo "API grants cross-origin access again"
+            cat acao.txt
+            exit 1
+          fi
+
           echo "--- index ---"
           curl -fsS "$base/" | head -c 120
           echo

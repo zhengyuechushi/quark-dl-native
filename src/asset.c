@@ -50,19 +50,33 @@ typedef struct asset {
 static asset_t* g_asset_head = 0;
 
 
-static  void
-asset_normalize_path(const char *url, char* path) {
-  char* ptr = path;
+/* Copies the request target into `path`, collapsing runs of '/'.
+ *
+ * Returns -1 when the target does not fit. That check is the point: MHD hands
+ * this function whatever the client sent (up to its connection memory limit),
+ * and the buffer is PATH_MAX on the stack. Without the bound, one request with
+ * a very long path walks off `path` and returns into whatever the stack holds
+ * next - a remote crash, or worse, on a console that has no memory protection
+ * to stop it. A target that long cannot name an asset anyway. */
+static int
+asset_normalize_path(const char *url, char *path, size_t cap) {
+  size_t len = strlen(url);
+  size_t o = 0;
 
-  for(size_t i=0; i<strlen(url); i++) {
-    if(url[i] == '/' && url[i+1] == '/') {
+  if(!len || len >= cap) {
+    return -1;
+  }
+  for(size_t i = 0; i < len; i++) {
+    if(url[i] == '/' && url[i + 1] == '/') {
       continue;
     }
-    *ptr = url[i];
-    ptr++;
+    if(o + 1 >= cap) {
+      return -1;
+    }
+    path[o++] = url[i];
   }
-
-  *ptr = '\0';
+  path[o] = '\0';
+  return 0;
 }
 
 
@@ -106,15 +120,16 @@ asset_request(struct MHD_Connection *conn, const char* url) {
   const char* encoding = 0;
   char path[PATH_MAX];
 
-  asset_normalize_path(url, path);
-  for(asset_t* a=g_asset_head; a!=0; a=a->next) {
-    if(!strcmp(path, a->path)) {
-      data = a->data;
-      size = a->size;
-      mime = a->mime;
-      encoding = a->encoding;
-      status = MHD_HTTP_OK;
-      break;
+  if(asset_normalize_path(url, path, sizeof(path)) == 0) {
+    for(asset_t* a=g_asset_head; a!=0; a=a->next) {
+      if(!strcmp(path, a->path)) {
+        data = a->data;
+        size = a->size;
+        mime = a->mime;
+        encoding = a->encoding;
+        status = MHD_HTTP_OK;
+        break;
+      }
     }
   }
 
