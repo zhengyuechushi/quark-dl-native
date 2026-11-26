@@ -761,50 +761,100 @@ api_dl_add(struct MHD_Connection *conn, const char *body, size_t size) {
   return send_json(conn, added ? MHD_HTTP_OK : MHD_HTTP_BAD_REQUEST, reply);
 }
 
+/* ?src=drive|link narrows a bulk action to one half of the queue; missing means
+ * both, which is what a script or an old caller wants. */
+static int
+arg_src(struct MHD_Connection *conn) {
+  const char *src = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "src");
+
+  if(src && !strcmp(src, "drive")) {
+    return DL_SRC_DRIVE;
+  }
+  if(src && !strcmp(src, "link")) {
+    return DL_SRC_LINK;
+  }
+  return DL_SRC_ALL;
+}
+
+#define DL_ARG_BAD (-2)
+
+/* ?id=<n> | ?id=all, plus an optional ?src= for the bulk form.
+ *
+ * A missing id used to be read as -1, which meant "the whole queue": a request
+ * that lost its query string was indistinguishable from 全部取消. Bulk now has
+ * to say ?id=all out loud, and anything else is DL_ARG_BAD. */
+static int
+target_id(struct MHD_Connection *conn, int *src) {
+  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
+  int id;
+
+  *src = arg_src(conn);
+  if(!arg || !arg[0]) {
+    return DL_ARG_BAD;
+  }
+  if(!strcmp(arg, "all")) {
+    return -1;
+  }
+  id = atoi(arg);
+  return id > 0 ? id : DL_ARG_BAD;
+}
+
 static enum MHD_Result
 api_dl_cancel(struct MHD_Connection *conn, const char *method) {
-  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
   char body[160];
-  int n;
+  int src = DL_SRC_ALL;
+  int n, id;
 
   if(strcmp(method, MHD_HTTP_METHOD_POST)) {
     return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
                      "{\"ok\":false,\"error\":\"use POST\"}");
   }
-  n = (arg && !strcmp(arg, "all")) ? dl_cancel(-1)
-                                   : dl_cancel(arg ? atoi(arg) : -1);
+  id = target_id(conn, &src);
+  if(id == DL_ARG_BAD) {
+    return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                     "{\"ok\":false,\"error\":\"缺少 id（全部请用 id=all）\"}");
+  }
+  n = dl_cancel(id, src);
   snprintf(body, sizeof(body), "{\"ok\":true,\"canceled\":%d}", n);
   return send_json(conn, MHD_HTTP_OK, body);
 }
 
 static enum MHD_Result
 api_dl_pause(struct MHD_Connection *conn, const char *method) {
-  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
   char body[160];
-  int n;
+  int src = DL_SRC_ALL;
+  int n, id;
 
   if(strcmp(method, MHD_HTTP_METHOD_POST)) {
     return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
                      "{\"ok\":false,\"error\":\"use POST\"}");
   }
-  n = (arg && !strcmp(arg, "all")) ? dl_pause(-1)
-                                   : dl_pause(arg ? atoi(arg) : -1);
+  id = target_id(conn, &src);
+  if(id == DL_ARG_BAD) {
+    return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                     "{\"ok\":false,\"error\":\"缺少 id（全部请用 id=all）\"}");
+  }
+  n = dl_pause(id, src);
   snprintf(body, sizeof(body), "{\"ok\":true,\"paused\":%d}", n);
   return send_json(conn, MHD_HTTP_OK, body);
 }
 
 static enum MHD_Result
 api_dl_resume(struct MHD_Connection *conn, const char *method) {
-  const char *arg = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "id");
   char body[160];
-  int n;
+  int src = DL_SRC_ALL;
+  int n, id;
 
   if(strcmp(method, MHD_HTTP_METHOD_POST)) {
     return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
                      "{\"ok\":false,\"error\":\"use POST\"}");
   }
-  n = (arg && !strcmp(arg, "all")) ? dl_resume(-1)
-                                   : dl_resume(arg ? atoi(arg) : -1);
+  id = target_id(conn, &src);
+  if(id == DL_ARG_BAD) {
+    return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                     "{\"ok\":false,\"error\":\"缺少 id（全部请用 id=all）\"}");
+  }
+  n = dl_resume(id, src);
   snprintf(body, sizeof(body), "{\"ok\":true,\"resumed\":%d}", n);
   return send_json(conn, MHD_HTTP_OK, body);
 }
@@ -827,8 +877,7 @@ api_dl_retry(struct MHD_Connection *conn, const char *method) {
 static enum MHD_Result
 api_dl_clear(struct MHD_Connection *conn, const char *method) {
   char body[120];
-  const char *src;
-  int which = DL_SRC_ALL;
+  int which;
 
   if(strcmp(method, MHD_HTTP_METHOD_POST)) {
     return send_json(conn, MHD_HTTP_METHOD_NOT_ALLOWED,
@@ -838,12 +887,7 @@ api_dl_clear(struct MHD_Connection *conn, const char *method) {
    * about, so ?src=drive|link drops only that half - without it the button on
    * the direct-link page would silently wipe the drive's finished tasks too.
    * No argument still means "everything", which is what old callers send. */
-  src = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "src");
-  if(src && !strcmp(src, "drive")) {
-    which = DL_SRC_DRIVE;
-  } else if(src && !strcmp(src, "link")) {
-    which = DL_SRC_LINK;
-  }
+  which = arg_src(conn);
   snprintf(body, sizeof(body), "{\"ok\":true,\"cleared\":%d}",
            dl_clear_finished(which));
   return send_json(conn, MHD_HTTP_OK, body);

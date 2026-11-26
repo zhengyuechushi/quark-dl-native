@@ -23,7 +23,7 @@ endif
 include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
 endif
 
-APP_VERSION := 0.12.7
+APP_VERSION := 0.12.8
 # 主屏幕条目的 titleId，必须与 assets/param.json 的 titleId 逐字一致。
 TITLE_ID    := QDLK85200
 BUILD_ID    ?= dev

@@ -1657,8 +1657,23 @@ dl_add(const char *url, const char *fid, const char *name, const char *dir,
   return id;
 }
 
+/* Does this task belong to the selection the caller asked for? One id means one
+ * task and the source is ignored; a bulk call (id < 0) means every task in
+ * `src`, and DL_SRC_ALL means the whole queue. Every bulk loop below goes
+ * through this so "全部暂停 on this page" cannot leak into the other page. */
+static int
+in_scope(const dl_task *t, int id, int src) {
+  if(!t->id) {
+    return 0;
+  }
+  if(id >= 0) {
+    return t->id == id;
+  }
+  return src == DL_SRC_ALL || task_src(t) == src;
+}
+
 int
-dl_pause(int id) {
+dl_pause(int id, int src) {
   int i;
   int n = 0;
 
@@ -1666,7 +1681,7 @@ dl_pause(int id) {
   for(i = 0; i < g_count; i++) {
     dl_task *t = &g_task[i];
 
-    if(!t->id || (id >= 0 && t->id != id)) {
+    if(!in_scope(t, id, src)) {
       continue;
     }
     if(t->state == DL_QUEUED) {
@@ -1690,7 +1705,7 @@ dl_pause(int id) {
 }
 
 int
-dl_resume(int id) {
+dl_resume(int id, int src) {
   int i;
   int n = 0;
 
@@ -1698,7 +1713,7 @@ dl_resume(int id) {
   for(i = 0; i < g_count; i++) {
     dl_task *t = &g_task[i];
 
-    if(!t->id || (id >= 0 && t->id != id)) {
+    if(!in_scope(t, id, src)) {
       continue;
     }
     if(t->state == DL_PAUSED) {
@@ -1718,7 +1733,7 @@ dl_resume(int id) {
 }
 
 int
-dl_cancel(int id) {
+dl_cancel(int id, int src) {
   int i;
   int n = 0;
 
@@ -1726,7 +1741,14 @@ dl_cancel(int id) {
   for(i = 0; i < g_count; i++) {
     dl_task *t = &g_task[i];
 
-    if(!t->id || (id >= 0 && t->id != id)) {
+    if(!in_scope(t, id, src)) {
+      continue;
+    }
+    /* A bulk cancel is about the work left to do. Marking finished tasks as
+     * canceled would rewrite history nobody asked to change, and inflated the
+     * count the page reports back. */
+    if(id < 0 && t->state != DL_QUEUED && t->state != DL_RUNNING &&
+       t->state != DL_PAUSED) {
       continue;
     }
     t->cancel = 1;
@@ -1743,10 +1765,14 @@ dl_cancel(int id) {
     dl_task *t = &g_task[i];
     char part[1024];
 
-    if(!t->id) {
+    if(!in_scope(t, id, src)) {
       continue;
     }
-    if(id >= 0 && t->id != id) {
+    /* Bulk only: touch the .part of a task this very call marked. A failed
+     * task also has a .part, and deleting it would turn "重试" from resume into
+     * a fresh download - the user asked to cancel what is running, not to throw
+     * away a retry point. */
+    if(id < 0 && !t->cancel) {
       continue;
     }
     if(path_join(part, sizeof(part), t->dir, t->name, ".part") == 0) {

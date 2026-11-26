@@ -226,6 +226,39 @@ assert left, 'the link task disappeared with the drive clear'
 print('%d link task(s) survived a drive-only clear' % len(left))
 PY
 
+say "bulk pause/cancel are scoped and leave finished work alone"
+# A missing ?id= used to be read as -1, i.e. "the whole queue". A request that
+# lost its query string then looked exactly like 全部取消, which deletes .part
+# files. It has to be refused now.
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/api/dl/cancel")
+echo "cancel with no id -> $code"
+test "$code" = 400 || fail "an id-less bulk cancel must be refused, got $code"
+
+curl -fsS -X POST "$BASE/api/dl/pause?id=all&src=link" >"$WORK/pause-all.json"
+cat "$WORK/pause-all.json"
+echo
+python3 - "$BASE" "$WORK/pause-all.json" <<'PY'
+import json, sys, urllib.request
+n = json.load(open(sys.argv[2]))['paused']
+d = json.load(urllib.request.urlopen(sys.argv[1] + '/api/dl/list', timeout=10))
+assert n == 0, 'pausing everything touched %d finished task(s)' % n
+assert any(t['state'] == 'done' for t in d['tasks']), 'the finished task is gone'
+print('pause-all skipped finished tasks: %d touched' % n)
+PY
+
+# 全部取消 means "stop what is left", not "relabel yesterday's downloads".
+curl -fsS -X POST "$BASE/api/dl/cancel?id=all&src=link" >"$WORK/cancel-all.json"
+cat "$WORK/cancel-all.json"
+echo
+python3 - "$BASE" "$WORK/cancel-all.json" <<'PY'
+import json, sys, urllib.request
+n = json.load(open(sys.argv[2]))['canceled']
+d = json.load(urllib.request.urlopen(sys.argv[1] + '/api/dl/list', timeout=10))
+assert n == 0, 'cancel-all relabelled %d finished task(s)' % n
+assert any(t['state'] == 'done' for t in d['tasks']), 'a finished task became canceled'
+print('cancel-all left finished work intact')
+PY
+
 say "a quark CDN link is refused without UA, Referer and cookie"
 # The mock's negative control first: without the three headers it must answer
 # 412, or the positive case below would pass for the wrong reason.

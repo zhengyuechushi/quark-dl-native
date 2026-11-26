@@ -298,6 +298,7 @@ const nm1 = row1.children.find((c) => c.tagName === 'SPAN');
 const go1 = row1.children.find((c) => c.tagName === 'BUTTON');
 check('目录行右边有「进入」按钮', !!go1 && go1.textContent === '进入',
       go1 && go1.textContent);
+check('目录名后面不带斜杠', !!nm1 && nm1.textContent === '第二季', nm1 && nm1.textContent);
 requests.length = 0;
 row1.onclick({ target: nm1 });
 check('点目录名只是勾选它（不再进去）', cb1.checked === true, String(cb1.checked));
@@ -653,6 +654,106 @@ check('子层提交的 items 里没有整个文件夹', !!oneReq && !/d1%09/.tes
 const itemsPart = oneReq ? ((oneReq.body.match(/items=([^&]*)/) || [])[1] || '') : '';
 check('items 只有一行', itemsPart.split('%0A').length === 1, itemsPart);
 drain();
+
+console.log('\n批量暂停 / 全部取消（0.12.8）');
+/* 一页两个按钮，只动本页这一半；「全部暂停」在本页全停了以后变成「全部继续」；
+ * 「全部取消」要两下确认，因为它是真删 .part。 */
+DEFAULTS['/api/dl/list'] = () => ({
+  ok: true, limit_drive: 2, limit_link: 2,
+  tasks: [
+    { id: 30, state: 'running', src: 'drive', done: 5, total: 10, attempts: 0, speed: 100, name: '网盘A.mkv', dir: '/d', exists: null },
+    { id: 31, state: 'queued', src: 'drive', done: 0, total: 10, attempts: 0, speed: 0, name: '网盘B.mkv', dir: '/d', exists: null },
+    { id: 32, state: 'running', src: 'link', done: 1, total: 10, attempts: 0, speed: 50, name: '直链A.bin', dir: '/d', exists: null },
+    { id: 33, state: 'queued', src: 'link', done: 0, total: 10, attempts: 0, speed: 0, name: '直链B.bin', dir: '/d', exists: null },
+  ],
+});
+DEFAULTS['/api/dl/pause'] = () => ({ ok: true, paused: 2 });
+DEFAULTS['/api/dl/resume'] = () => ({ ok: true, resumed: 2 });
+DEFAULTS['/api/dl/cancel'] = () => ({ ok: true, canceled: 2 });
+
+requests.length = 0;
+nodeFor('clear').onclick(); /* 借它触发一轮 pollQueue */
+drain();
+check('网盘页的批量按钮写着「全部暂停」',
+      nodeFor('pauseAll').textContent === '全部暂停', nodeFor('pauseAll').textContent);
+check('有任务时批量按钮可用',
+      nodeFor('pauseAll').disabled === false && nodeFor('cancelAll').disabled === false);
+check('直链页也有自己的一份', nodeFor('pauseAll2').textContent === '全部暂停');
+
+requests.length = 0;
+nodeFor('pauseAll').onclick();
+const bPause = requests.find((r) => r.url.split('?')[0] === '/api/dl/pause');
+check('全部暂停发到 /api/dl/pause', !!bPause, bPause && bPause.url);
+check('全部暂停只动网盘那一半',
+      !!bPause && /id=all/.test(bPause.url) && /src=drive/.test(bPause.url),
+      bPause && bPause.url);
+drain();
+check('暂停后回显几个', /已暂停 2 个/.test(nodeFor('bulkState').textContent),
+      nodeFor('bulkState').textContent);
+
+requests.length = 0;
+nodeFor('pauseAll2').onclick();
+const bPause2 = requests.find((r) => r.url.split('?')[0] === '/api/dl/pause');
+check('直链页的全部暂停带 src=link', !!bPause2 && /src=link/.test(bPause2.url),
+      bPause2 && bPause2.url);
+drain();
+
+/* 本页都停了，同一颗按钮应该变成「全部继续」，不用去逐条点。 */
+DEFAULTS['/api/dl/list'] = () => ({
+  ok: true, limit_drive: 2, limit_link: 2,
+  tasks: [
+    { id: 30, state: 'paused', src: 'drive', done: 5, total: 10, attempts: 0, speed: 0, name: '网盘A.mkv', dir: '/d', exists: null },
+    { id: 31, state: 'paused', src: 'drive', done: 0, total: 10, attempts: 0, speed: 0, name: '网盘B.mkv', dir: '/d', exists: null },
+    { id: 32, state: 'paused', src: 'link', done: 1, total: 10, attempts: 0, speed: 0, name: '直链A.bin', dir: '/d', exists: null },
+  ],
+});
+requests.length = 0;
+nodeFor('clear').onclick();
+drain();
+check('全停了之后按钮变成「全部继续」',
+      nodeFor('pauseAll').textContent === '全部继续', nodeFor('pauseAll').textContent);
+requests.length = 0;
+nodeFor('pauseAll').onclick();
+const bResume = requests.find((r) => r.url.split('?')[0] === '/api/dl/resume');
+check('全部继续发到 /api/dl/resume', !!bResume, bResume && bResume.url);
+check('全部继续也只管本页', !!bResume && /src=drive/.test(bResume.url), bResume && bResume.url);
+drain();
+
+requests.length = 0;
+nodeFor('cancelAll').onclick();
+check('全部取消第一下不发请求',
+      requests.filter((r) => r.url.indexOf('/api/dl/cancel') === 0).length === 0,
+      requests.map((r) => r.url).join(','));
+check('第一下变成「再点一次确认」', nodeFor('cancelAll').textContent === '再点一次确认',
+      nodeFor('cancelAll').textContent);
+nodeFor('cancelAll').onclick();
+const bCancel = requests.find((r) => r.url.split('?')[0] === '/api/dl/cancel');
+check('第二下才发 /api/dl/cancel', !!bCancel, bCancel && bCancel.url);
+check('全部取消带 id=all 和 src=drive',
+      !!bCancel && /id=all/.test(bCancel.url) && /src=drive/.test(bCancel.url),
+      bCancel && bCancel.url);
+drain();
+check('取消后回显几个', /已取消 2 个/.test(nodeFor('bulkState').textContent),
+      nodeFor('bulkState').textContent);
+
+/* 只剩已完成的任务，两颗按钮都该变灰，点了也不能再发请求。 */
+DEFAULTS['/api/dl/list'] = () => ({
+  ok: true, limit_drive: 2, limit_link: 2,
+  tasks: [
+    { id: 30, state: 'done', src: 'drive', done: 10, total: 10, attempts: 0, name: '网盘A.mkv', dir: '/d', exists: true },
+  ],
+});
+requests.length = 0;
+nodeFor('clear').onclick();
+drain();
+check('没有在动/暂停的任务时批量按钮变灰',
+      nodeFor('pauseAll').disabled === true && nodeFor('cancelAll').disabled === true);
+requests.length = 0;
+nodeFor('pauseAll').onclick();
+nodeFor('cancelAll').onclick();
+check('变灰后点它不发请求',
+      requests.filter((r) => r.url.indexOf('/api/dl/') === 0).length === 0,
+      requests.map((r) => r.url).join(','));
 
 console.log('');
 if (failures) {

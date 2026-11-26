@@ -92,15 +92,23 @@ void dl_set_cookie(const char *cookie);
  * Returns the number of tasks queued. */
 int dl_retry(int id);
 
-/* id < 0 pauses everything running or queued. A paused task keeps its .part
- * file; dl_resume puts it back in the queue. Returns the number touched. */
-int dl_pause(int id);
-int dl_resume(int id);
+/* id < 0 means "every task in `src`" (DL_SRC_ALL covers both halves). The bulk
+ * form takes a source because each page has its own 全部暂停 button: freezing a
+ * 40-file drive batch by pressing it on the direct-link page would be a bug the
+ * user never asked for. A paused task keeps its .part file; dl_resume puts it
+ * back in the queue. Returns the number touched.
+ *
+ * Without an id the caller wanted a bulk action and forgot to say so - that is
+ * an error at the API layer, not an instruction to touch the whole queue. */
+int dl_pause(int id, int src);
+int dl_resume(int id, int src);
 
-/* id < 0 cancels everything. Unlike pause, cancel also removes the task's
- * .part file, so an unfinished download is actually gone, not silently kept.
+/* id < 0 cancels everything in `src` that is still live (queued, running or
+ * paused). Unlike pause, cancel also removes the task's .part file, so an
+ * unfinished download is actually gone, not silently kept. Finished tasks are
+ * left alone - "cancel everything" must not relabel yesterday's downloads.
  * Returns the number of tasks touched. */
-int dl_cancel(int id);
+int dl_cancel(int id, int src);
 
 /* Which half of the queue a task belongs to: a file picked from the drive is
  * queued by fid, a pasted link has no fid. Both live in the same queue and the

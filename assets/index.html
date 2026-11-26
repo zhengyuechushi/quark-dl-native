@@ -263,6 +263,11 @@
         <div class="toolbar">
           <button id="saveDir" class="small">记住这个目录</button>
           <button id="clear" class="small">清掉已完成</button>
+          <!-- 批量操作只作用于本页这一半（?src=drive）：在直链页按「全部暂停」
+               不该把后面排着的网盘批量也冻住。 -->
+          <button id="pauseAll" class="small">全部暂停</button>
+          <button id="cancelAll" class="small danger">全部取消</button>
+          <span class="muted" id="bulkState"></span>
           <!-- 这里的并发只管网盘任务；直链页有自己的一份，互不占槽位。 -->
           <span class="muted">并发</span>
           <select id="limitSel" class="small">
@@ -300,6 +305,9 @@
         <div class="toolbar">
           <button id="saveDir2" class="small">记住这个目录</button>
           <button id="clear2" class="small">清掉已完成</button>
+          <button id="pauseAll2" class="small">全部暂停</button>
+          <button id="cancelAll2" class="small danger">全部取消</button>
+          <span class="muted" id="bulkState2"></span>
           <!-- 并发上限按页各设各的：这一页的槽位只归直链任务，网盘那边排队再多也不会
                把这里的下载拖成「等待中」。 -->
           <span class="muted">并发</span>
@@ -358,7 +366,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.12.7';
+  var PAGE_V = '0.12.8';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -697,6 +705,75 @@
     }
   }
 
+  /* 批量暂停/取消：一页一份，只动本页这一半（?src=drive|link）。
+   *
+   * 两个按钮而不是三个：「全部暂停」在本页没有在动的任务时变成「全部继续」。
+   * 按下之后页面必然只剩暂停和已结束的任务，这时唯一有意义的动作就是继续，
+   * 所以不需要单独一颗按钮，也不会出现「全部暂停」永远亮着、点第二下没反应。
+   *
+   * 取消会删掉未完成的 .part，是真删除，所以要走两段：第一下只把按钮变成
+   * 「再点一次确认」，4 秒内没有第二下就自己退回原状。不用 confirm() —— 控制台
+   * 浏览器上是阻塞模态，弹出时正好挡住进度。 */
+  var bulkMode = { drive: 'idle', link: 'idle' };
+  var bulkArmed = { drive: 0, link: 0 };
+
+  function syncBulk(src, pauseBtn, cancelBtn, list) {
+    var running = 0, paused = 0, live = 0, i, s;
+
+    if (!pauseBtn || !cancelBtn) return;
+    for (i = 0; i < list.length; i++) {
+      s = list[i].state;
+      if (s === 'running' || s === 'queued') { running++; live++; }
+      else if (s === 'paused') { paused++; live++; }
+    }
+    /* 还有在动的就先暂停；都停了才给继续。已完成/失败/已取消不算在内。 */
+    bulkMode[src] = running ? 'pause' : (paused ? 'resume' : 'idle');
+    pauseBtn.textContent = (bulkMode[src] === 'resume') ? '全部继续' : '全部暂停';
+    pauseBtn.disabled = !live;
+    cancelBtn.disabled = !live;
+    cancelBtn.textContent = bulkArmed[src] ? '再点一次确认' : '全部取消';
+  }
+
+  function bindBulk(src, pauseId, cancelId, stateId) {
+    var pauseBtn = el(pauseId), cancelBtn = el(cancelId);
+
+    if (!pauseBtn || !cancelBtn) return;
+    pauseBtn.onclick = function () {
+      if (bulkMode[src] === 'idle') return;
+      var resume = (bulkMode[src] === 'resume');
+      pauseBtn.disabled = true;
+      json('POST', '/api/dl/' + (resume ? 'resume' : 'pause') + '?id=all&src=' + src,
+        '', function (err, d) {
+          /* 失败也要拉一次队列：按钮已经被禁用，只有 syncBulk 会把它打开，
+           * 少了这一句，一次网络抖动就能让按钮永远是灰的。 */
+          if (err) { text(stateId, '没有生效：' + err.message); pollQueue(); return; }
+          text(stateId, resume ? ('已继续 ' + (d.resumed || 0) + ' 个')
+                               : ('已暂停 ' + (d.paused || 0) + ' 个'));
+          pollQueue();
+        });
+    };
+    cancelBtn.onclick = function () {
+      if (bulkMode[src] === 'idle') return;
+      if (!bulkArmed[src]) {
+        bulkArmed[src] = 1;
+        cancelBtn.textContent = '再点一次确认';
+        setTimeout(function () {
+          bulkArmed[src] = 0;
+          cancelBtn.textContent = '全部取消';
+        }, 4000);
+        return;
+      }
+      bulkArmed[src] = 0;
+      cancelBtn.textContent = '全部取消';
+      cancelBtn.disabled = true;
+      json('POST', '/api/dl/cancel?id=all&src=' + src, '', function (err, d) {
+        if (err) { text(stateId, '没有生效：' + err.message); pollQueue(); return; }
+        text(stateId, '已取消 ' + (d.canceled || 0) + ' 个');
+        pollQueue();
+      });
+    };
+  }
+
   function pollQueue() {
     if (queueBusy || addBusy) return;
     queueBusy = true;
@@ -725,6 +802,9 @@
       }
       renderQueue(el('tasks'), drive, '还没有网盘任务。');
       renderQueue(el('tasks2'), link, '还没有直链任务。');
+      /* 按钮的文案和可用状态跟着本页列表走：全都完了就变灰，全停了就变「继续」。 */
+      syncBulk('drive', el('pauseAll'), el('cancelAll'), drive);
+      syncBulk('link', el('pauseAll2'), el('cancelAll2'), link);
       /* 这一页的并发是独立的一份，所以「等待中」只可能是本页的槽位占满了，
        * 不会出现「别的页面在跑，这里干等」那种看起来像卡死的情况。 */
       text('q2Info', '本页 ' + link.length + ' 个任务，' + running + ' 个下载中，并发上限 ' +
@@ -822,6 +902,8 @@
    * 会让人以为点错了。 */
   el('clear').onclick = function () { clearDone('', 'drive'); };
   el('clear2').onclick = function () { clearDone('dirState2', 'link'); };
+  bindBulk('drive', 'pauseAll', 'cancelAll', 'bulkState');
+  bindBulk('link', 'pauseAll2', 'cancelAll2', 'bulkState2');
 
   el('exit').onclick = function () {
     var btn = el('exit');
@@ -1052,7 +1134,10 @@
         var go = null;                 /* 只有目录行才有它，赋值在下面 */
         var nm = document.createElement('span');
         nm.className = e.dir ? 'qn dir' : 'qn';
-        nm.textContent = e.name + (e.dir ? '/' : '');
+        /* No trailing slash: the colour and the 「进入」 button already say
+         * "this is a folder", and a slash glued to the name makes people read
+         * it as part of the name when they are scanning for a file. */
+        nm.textContent = e.name;
         row.appendChild(nm);
 
         /* 一行只做一件事：整行（连名字）都是"勾选"，进目录另有右边的「进入」。
