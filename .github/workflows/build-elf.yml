@@ -190,8 +190,9 @@ jobs:
       - name: Pause and cancel are distinct
         run: |
           set -e
-          grep -q "int dl_pause(int id)" src/dl.h
-          grep -q "int dl_resume(int id)" src/dl.h
+          grep -q "int dl_pause(int id, int src)" src/dl.h
+          grep -q "int dl_resume(int id, int src)" src/dl.h
+          grep -q "int dl_cancel(int id, int src)" src/dl.h
           grep -q "DL_PAUSED" src/dl.h
           grep -q "unlink(part)" src/dl.c
           grep -q '"/api/dl/pause"' src/api.c
