@@ -18,3 +18,14 @@ deliverables-stage*/
 # Python 缓存
 __pycache__/
 *.pyc
+
+# 本地临时脚本与请求体（等 CI、拉产物、发 Release 时随手写的）
+.ci-*.py
+.fetch*.py
+.release*.json
+.release-notes.md
+rel.json
+up.json
+jobs.json
+arts.json
+.ci.log
