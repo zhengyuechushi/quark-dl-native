@@ -384,6 +384,26 @@ jobs:
           print('ok')
           PY
 
+      # 0.12.7 的事故：勾了文件夹却点进了文件夹，勾选没取消只是看不见，接着勾一个
+      # 文件就把整个文件夹提交了。三处必须同时成立，少一处这个 bug 就会复发：
+      # 整行只勾选（目录名不许绑导航）、进目录只有一颗按钮、换层清空勾选。
+      - name: One row has one action
+        run: |
+          set -e
+          python3 - <<'PY'
+          import io
+          htm = io.open('assets/index.html', encoding='utf-8').read()
+          assert "go.textContent = '进入'" in htm, 'folder row has no explicit enter button'
+          assert 'nm.onclick' not in htm, 'the folder name navigates again'
+          assert htm.count('qPath.push') == 1, 'a second way into a folder bypasses qLoad'
+          load = htm.split('function qLoad()', 1)[1].split('function ', 1)[0]
+          assert 'qSel = {};' in load, 'qLoad does not drop the selection when the level changes'
+          assert 'pdir: qCurFid()' in htm, 'a ticked row does not remember which level it belongs to'
+          assert 'qSel[k].pdir === qCurFid()' in htm, 'submit does not filter by level'
+          assert 'keys = qCurSel()' in htm, 'submit iterates every tick ever made'
+          print('ok')
+          PY
+
       - name: Endpoints and clean exit
         run: |
           set -e

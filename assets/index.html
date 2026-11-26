@@ -123,8 +123,10 @@
   .qitem.on .qn { color: #eaf1ff; }
   .qitem input[type=checkbox] { width: 17px; height: 17px; flex: 0 0 auto; accent-color: #4f8cff; }
   .qitem .qn { flex: 1; font-size: 14px; word-break: break-all; }
-  .qitem .qn.dir { color: #7aa2ff; cursor: pointer; }
+  /* 目录名不再可点：整行只有一个含义（勾选），进目录走右边的「进入」。 */
+  .qitem .qn.dir { color: #7aa2ff; }
   .qitem .qd { color: #6b7683; font-size: 12px; white-space: nowrap; }
+  .qitem .go { flex: 0 0 auto; padding: 4px 10px; font-size: 12.5px; border-radius: 8px; }
   /* Tab panes: exactly one is visible at a time. */
   .pane { display: none; }
   .pane.show { display: block; }
@@ -356,7 +358,7 @@
    * Comparing the two is the only way to tell "the card is missing" from
    * "you are looking at last week's page". Kept in step with APP_VERSION by a
    * check in CI. */
-  var PAGE_V = '0.12.6';
+  var PAGE_V = '0.12.7';
   /* In the tab title as well: the tab is what a user looks at when they are
    * not sure whether they reloaded the right thing. */
   document.title = 'Quark DL ' + PAGE_V;
@@ -835,12 +837,27 @@
   /* ----- 夸克网盘 ----- */
 
   var qPath = [{ fid: '0', name: '根目录' }];
+  /* 勾选属于"哪一层"，所以每条都记住它是在哪个目录里勾的（pdir）。
+   * 曾经这个 map 只按 fid 存，换目录后旧勾选留在里面而屏幕上完全看不见，
+   * 用户接着勾一个文件、点「加入下载队列」，整个文件夹就被一起提交了。 */
   var qSel = {};
 
+  function qCurFid() {
+    return qPath[qPath.length - 1].fid;
+  }
+
+  /* 只认当前这一层的勾选。换目录时已经清空，这里再挡一道：任何漏清的旧勾选
+   * 都不会被当成"用户还想下这个文件夹"。 */
+  function qCurSel() {
+    var out = [], k;
+    for (k in qSel) {
+      if (qSel.hasOwnProperty(k) && qSel[k].pdir === qCurFid()) out.push(k);
+    }
+    return out;
+  }
+
   function qCount() {
-    var n = 0, k;
-    for (k in qSel) { if (qSel.hasOwnProperty(k)) n++; }
-    return n;
+    return qCurSel().length;
   }
 
   function qSetSel() {
@@ -1021,7 +1038,7 @@
         cb.checked = !!qSel[e.fid];
         cb.onchange = function () {
           if (cb.checked) {
-            qSel[e.fid] = { name: e.name, dir: e.dir };
+            qSel[e.fid] = { name: e.name, dir: e.dir, pdir: qCurFid() };
           } else {
             delete qSel[e.fid];
           }
@@ -1032,25 +1049,20 @@
         };
         row.appendChild(cb);
 
+        var go = null;                 /* 只有目录行才有它，赋值在下面 */
         var nm = document.createElement('span');
         nm.className = e.dir ? 'qn dir' : 'qn';
         nm.textContent = e.name + (e.dir ? '/' : '');
-        if (e.dir) {
-          nm.onclick = function () {
-            qPath.push({ fid: e.fid, name: e.name });
-            qLoad();
-          };
-        }
         row.appendChild(nm);
 
-        /* Tapping anywhere on the row toggles it. A 17px checkbox was the only
-         * way in, and tapping the row - the obvious gesture - did nothing at
-         * all, which reads as "selection is broken"; on a console browser the
-         * small box is also a poor target. Folder names still navigate. */
+        /* 一行只做一件事：整行（连名字）都是"勾选"，进目录另有右边的「进入」。
+         * 以前目录名可点、点空白处勾选，同一个行两套手势，手指偏十来个像素
+         * 就从"勾它"变成"进去"，而勾已经落在一个看不见的上一层目录里。
+         * 手柄和遥控器上偏差更大，这不是"用户点错"，是设计让人必错。 */
         row.onclick = function (ev) {
           var t = (ev && ev.target) || (window.event && window.event.srcElement);
-          if (t === cb) return;
-          if (t === nm && e.dir) return;
+          if (t === cb) return;        /* 原生勾选框自己处理 */
+          if (go && t === go) return;  /* 进入按钮自己处理 */
           cb.checked = !cb.checked;
           if (cb.onchange) cb.onchange();
         };
@@ -1060,6 +1072,19 @@
         meta.textContent = e.dir ? '' : fmtSize(e.size);
         row.appendChild(meta);
 
+        if (e.dir) {
+          go = document.createElement('button');
+          go.className = 'go';
+          go.textContent = '进入';
+          go.onclick = function (ev) {
+            if (ev && ev.stopPropagation) ev.stopPropagation();
+            qPath.push({ fid: e.fid, name: e.name });
+            qLoad();                   /* qLoad 清空勾选，见那里的注释 */
+            return false;
+          };
+          row.appendChild(go);
+        }
+
         box.appendChild(row);
       })(d.entries[i]);
     }
@@ -1067,6 +1092,11 @@
 
   function qLoad() {
     var cur = qPath[qPath.length - 1];
+    /* 看见的目录换了，勾选就作废。清空只放在这一个口子上：进目录、面包屑回退、
+     * 重新登录都走它，谁也不会漏掉一步。留着上一层的勾选等于让用户在屏幕上
+     * 找不到的地方攒任务，最后一次性提交出去。 */
+    qSel = {};
+    qSetSel();
     qCrumb();
     qaMsg('正在读目录…');
     json('GET', '/api/quark/list?pdir=' + encodeURIComponent(cur.fid), null, function (err, d) {
@@ -1137,10 +1167,10 @@
   };
 
   el('qAdd').onclick = function () {
-    var lines = [], k, n = qCount();
-    if (!n) { qaMsg('先在上面勾选文件或目录（每行左边的方框）', 'bad'); return; }
-    for (k in qSel) {
-      if (!qSel.hasOwnProperty(k)) continue;
+    var lines = [], keys = qCurSel(), n = keys.length, k, i;
+    if (!n) { qaMsg('先在上面勾选文件或目录（点整行）', 'bad'); return; }
+    for (i = 0; i < keys.length; i++) {
+      k = keys[i];
       /* Tab-separated: the name may contain pipes, slashes or anything else a
        * file name is allowed to contain. */
       lines.push(k + '\t' + qSel[k].name + '\t' + (qSel[k].dir ? 'd' : 'f'));

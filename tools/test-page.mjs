@@ -291,13 +291,28 @@ const selLabel = nodeFor('qSel');
 check('已选 1 项', /已选 1 项/.test(selLabel.textContent), selLabel.textContent);
 check('已选数量变色', selLabel.style.color === '#7aa2ff', selLabel.style.color);
 
-console.log('\n目录名点击仍然是进目录，不勾选');
+console.log('\n目录行：整行只做勾选，进目录另有按钮');
 const row1 = list.children[1];
 const cb1 = row1.children.find((c) => c.tagName === 'INPUT');
 const nm1 = row1.children.find((c) => c.tagName === 'SPAN');
+const go1 = row1.children.find((c) => c.tagName === 'BUTTON');
+check('目录行右边有「进入」按钮', !!go1 && go1.textContent === '进入',
+      go1 && go1.textContent);
+requests.length = 0;
 row1.onclick({ target: nm1 });
-check('点目录名没有勾选它', cb1.checked === false);
-drain(); /* 进目录会重新列一次 */
+check('点目录名只是勾选它（不再进去）', cb1.checked === true, String(cb1.checked));
+check('点名字没有顺手列一次目录',
+      !requests.some((r) => r.url.indexOf('/api/quark/list') === 0),
+      requests.map((r) => r.url).join(','));
+check('勾上目录是在原有勾选上追加（这里 f1 + 目录 = 2）',
+      /已选 2 项/.test(nodeFor('qSel').textContent),
+      nodeFor('qSel').textContent);
+/* 让后面的用例从"只勾了 f1"开始 */
+cb1.checked = false;
+if (cb1.onchange) cb1.onchange();
+check('取消勾选后回到 1 项', /已选 1 项/.test(nodeFor('qSel').textContent),
+      nodeFor('qSel').textContent);
+drain();
 
 console.log('\n勾选后点「加入下载队列」');
 requests.length = 0;
@@ -608,6 +623,36 @@ const clearDriveReq = requests.find((r) => r.url === '/api/dl/clear?src=drive');
 drain();
 check('网盘页清空只清网盘那半（?src=drive）', !!clearDriveReq,
       clearDriveReq && clearDriveReq.url);
+
+console.log('\n换层会清掉上一层的勾选（0.12.7）');
+/* 真实事故：勾了文件夹 → 点进文件夹（勾没取消，只是看不见了）→ 再勾一个文件
+ * → 队列里整个文件夹都进去了。两条防线：换层清空 + 提交时只认当前层。 */
+requests.length = 0;
+const rowDir = nodeFor('qList').children[1];
+const goBtn = rowDir.children.find((c) => c.tagName === 'BUTTON');
+goBtn.onclick({ stopPropagation() {} });
+check('「进入」发出的是这一级的目录请求',
+      !!requests.find((r) => r.url === '/api/quark/list?pdir=d1'),
+      requests.map((r) => r.url).join(','));
+drain();
+check('换层后勾选清零', /已选 0 项/.test(nodeFor('qSel').textContent),
+      nodeFor('qSel').textContent);
+check('换层后没有行还亮着',
+      nodeFor('qList').children.every((r) => !/\bon\b/.test(r.className)),
+      nodeFor('qList').children.map((r) => r.className).join('|'));
+
+const innerList = nodeFor('qList');
+ensureChecked(innerList.children[0]);
+check('在子层只勾了一个文件', /已选 1 项/.test(nodeFor('qSel').textContent),
+      nodeFor('qSel').textContent);
+requests.length = 0;
+nodeFor('qAdd').onclick();
+const oneReq = requests.find((r) => r.url.split('?')[0] === '/api/quark/add');
+check('子层提交的 items 里没有整个文件夹', !!oneReq && !/d1%09/.test(oneReq.body),
+      oneReq && oneReq.body);
+const itemsPart = oneReq ? ((oneReq.body.match(/items=([^&]*)/) || [])[1] || '') : '';
+check('items 只有一行', itemsPart.split('%0A').length === 1, itemsPart);
+drain();
 
 console.log('');
 if (failures) {
